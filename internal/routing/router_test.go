@@ -105,3 +105,106 @@ func TestRouter_CanaryTrafficSplit(t *testing.T) {
 		t.Fatalf("Expected canary ratio near 0.50, got %.2f (%d/%d)", ratio, canaryCount, total)
 	}
 }
+
+func TestRouter_SubdomainAndWildcardHost(t *testing.T) {
+	defaultPool := "default-pool"
+	subPool := "sub-pool"
+	wildPool := "wild-pool"
+
+	router := NewRouter(defaultPool)
+	// Route 1: Exact subdomain
+	router.AddRoute(RouteConfig{
+		ID:         "exact-sub",
+		Host:       "subdominio.blabla.com",
+		PathPrefix: "/",
+	}, subPool, nil)
+
+	// Route 2: Wildcard subdomain
+	router.AddRoute(RouteConfig{
+		ID:         "wild-sub",
+		Host:       "*.blabla.com",
+		PathPrefix: "/",
+	}, wildPool, nil)
+
+	// 1. Exact subdomain match
+	req1, _ := http.NewRequest("GET", "http://subdominio.blabla.com/status", nil)
+	route1, pool1, _, matched1 := router.Match(req1)
+	if !matched1 || route1.Config.ID != "exact-sub" || pool1 != subPool {
+		t.Fatalf("Expected exact-sub match, got id=%v pool=%v", route1.Config.ID, pool1)
+	}
+
+	// 2. Wildcard subdomain match (e.g. app.blabla.com)
+	req2, _ := http.NewRequest("GET", "http://app.blabla.com/status", nil)
+	route2, pool2, _, matched2 := router.Match(req2)
+	if !matched2 || route2.Config.ID != "wild-sub" || pool2 != wildPool {
+		t.Fatalf("Expected wild-sub match, got id=%v pool=%v", route2.Config.ID, pool2)
+	}
+
+	// 3. Request with port (e.g. subdominio.blabla.com:8080)
+	req3, _ := http.NewRequest("GET", "http://subdominio.blabla.com:8080/dashboard", nil)
+	route3, pool3, _, matched3 := router.Match(req3)
+	if !matched3 || route3.Config.ID != "exact-sub" || pool3 != subPool {
+		t.Fatalf("Expected exact-sub match with port, got id=%v pool=%v", route3.Config.ID, pool3)
+	}
+
+	// 4. Different domain falls back to default
+	req4, _ := http.NewRequest("GET", "http://otherdomain.com/status", nil)
+	_, pool4, _, matched4 := router.Match(req4)
+	if matched4 || pool4 != defaultPool {
+		t.Fatalf("Expected fallback to defaultPool, got matched=%v pool=%v", matched4, pool4)
+	}
+}
+
+func TestRouter_PathRewriteAndStripPrefix(t *testing.T) {
+	defaultPool := "default-pool"
+	rewritePool := "rewrite-pool"
+	stripPool := "strip-pool"
+
+	router := NewRouter(defaultPool)
+
+	// Route with rewrite: /teste -> /sitenovo
+	router.AddRoute(RouteConfig{
+		ID:            "rewrite-route",
+		Host:          "*",
+		PathPrefix:    "/teste",
+		RewritePrefix: "/sitenovo",
+	}, rewritePool, nil)
+
+	// Route with strip prefix: /api/v1 -> /
+	router.AddRoute(RouteConfig{
+		ID:          "strip-route",
+		Host:        "*",
+		PathPrefix:  "/api/v1",
+		StripPrefix: true,
+	}, stripPool, nil)
+
+	// 1. Test /teste exact rewrite
+	req1, _ := http.NewRequest("GET", "http://localhost:8080/teste", nil)
+	route1, pool1, _, matched1 := router.Match(req1)
+	if !matched1 || pool1 != rewritePool {
+		t.Fatalf("Expected rewrite-route match, got matched=%v pool=%v", matched1, pool1)
+	}
+	route1.ApplyRewrite(req1)
+	if req1.URL.Path != "/sitenovo" {
+		t.Fatalf("Expected path /sitenovo, got %s", req1.URL.Path)
+	}
+
+	// 2. Test /teste/users/profile rewrite
+	req2, _ := http.NewRequest("GET", "http://localhost:8080/teste/users/profile", nil)
+	route2, _, _, _ := router.Match(req2)
+	route2.ApplyRewrite(req2)
+	if req2.URL.Path != "/sitenovo/users/profile" {
+		t.Fatalf("Expected path /sitenovo/users/profile, got %s", req2.URL.Path)
+	}
+
+	// 3. Test /api/v1/auth/login strip prefix
+	req3, _ := http.NewRequest("GET", "http://localhost:8080/api/v1/auth/login", nil)
+	route3, pool3, _, matched3 := router.Match(req3)
+	if !matched3 || pool3 != stripPool {
+		t.Fatalf("Expected strip-route match, got matched=%v pool=%v", matched3, pool3)
+	}
+	route3.ApplyRewrite(req3)
+	if req3.URL.Path != "/auth/login" {
+		t.Fatalf("Expected path /auth/login, got %s", req3.URL.Path)
+	}
+}

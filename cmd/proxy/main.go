@@ -249,14 +249,42 @@ func main() {
 	routerEngine := routing.NewRouter(l7Pool)
 	if len(cfg.Routes) > 0 {
 		for _, r := range cfg.Routes {
+			routePrimary := any(l7Pool)
+			routeCanary := any(targetCanary)
+
+			// If route specifies dedicated backends, instantiate dedicated BackendPool
+			if len(r.Backends) > 0 {
+				routePool := proxy.NewBackendPool()
+				for _, b := range r.Backends {
+					u := proxy.ParseURL(b.URL)
+					if u != nil {
+						backend := proxy.NewBackend(u, u.Host, b.Weight)
+						routePool.AddBackend(backend)
+						if m != nil {
+							m.SetBackendHealth(u.Host, true)
+						}
+					}
+				}
+				if l7Server != nil {
+					l7Server.InitPoolReverseProxies(routePool)
+				}
+				healthPools = append(healthPools, routePool)
+				routePrimary = routePool
+				routeCanary = routePool
+				log.Printf("[L7 Router] Route '%s' (host: '%s', prefix: '%s') with %d dedicated backend(s)",
+					r.ID, r.Host, r.PathPrefix, len(r.Backends))
+			}
+
 			routerEngine.AddRoute(routing.RouteConfig{
-				ID:           r.ID,
-				Host:         r.Host,
-				PathPrefix:   r.PathPrefix,
-				Methods:      r.Methods,
-				CanaryWeight: r.CanaryWeight,
-				StripPrefix:  r.StripPrefix,
-			}, l7Pool, targetCanary)
+				ID:            r.ID,
+				Host:          r.Host,
+				PathPrefix:    r.PathPrefix,
+				RewritePrefix: r.RewritePrefix,
+				StripPrefix:   r.StripPrefix,
+				Methods:       r.Methods,
+				CanaryWeight:  r.CanaryWeight,
+				PreserveHost:  r.PreserveHost,
+			}, routePrimary, routeCanary)
 		}
 	} else if l7Pool != nil {
 		routerEngine.AddRoute(routing.RouteConfig{

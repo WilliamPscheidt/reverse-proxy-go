@@ -33,6 +33,12 @@ type BalancerInterface interface {
 	NextHTTP(pool *BackendPool, req *http.Request, clientIP string) (*Backend, error)
 }
 
+type l7ContextKey string
+
+const (
+	preserveHostKey l7ContextKey = "proxygo_preserve_host"
+)
+
 // L7Server represents the HTTP reverse proxy and load balancer server.
 type L7Server struct {
 	mu              sync.RWMutex
@@ -87,6 +93,10 @@ func NewL7Server(
 				Rewrite: func(pr *httputil.ProxyRequest) {
 					pr.SetURL(targetURL)
 					pr.SetXForwarded()
+					preserve, _ := pr.In.Context().Value(preserveHostKey).(bool)
+					if !preserve {
+						pr.Out.Host = targetURL.Host
+					}
 				},
 				Transport: transport,
 				ErrorHandler: func(w http.ResponseWriter, req *http.Request, err error) {
@@ -158,6 +168,10 @@ func (s *L7Server) InitPoolReverseProxies(p *BackendPool) {
 				Rewrite: func(pr *httputil.ProxyRequest) {
 					pr.SetURL(targetURL)
 					pr.SetXForwarded()
+					preserve, _ := pr.In.Context().Value(preserveHostKey).(bool)
+					if !preserve {
+						pr.Out.Host = targetURL.Host
+					}
 				},
 				Transport: s.transport,
 				ErrorHandler: func(w http.ResponseWriter, req *http.Request, err error) {
@@ -295,6 +309,10 @@ func (s *L7Server) AddBackendTarget(rawURL string, weight int) (*Backend, error)
 		Rewrite: func(pr *httputil.ProxyRequest) {
 			pr.SetURL(targetURL)
 			pr.SetXForwarded()
+			preserve, _ := pr.In.Context().Value(preserveHostKey).(bool)
+			if !preserve {
+				pr.Out.Host = targetURL.Host
+			}
 		},
 		Transport: s.transport,
 		ErrorHandler: func(w http.ResponseWriter, req *http.Request, err error) {
@@ -484,7 +502,24 @@ func (s *L7Server) handleHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 3. Edge Cache Check (GET/HEAD requests)
+	// 3. L7 Routing, Virtual Host Matching, Canary & Path Rewriting
+	targetPool := s.pool
+	isCanary := false
+	if routerEngine != nil {
+		route, pool, canary, _ := routerEngine.Match(r)
+		if route != nil {
+			route.ApplyRewrite(r)
+			if route.Config.PreserveHost {
+				r = r.WithContext(context.WithValue(r.Context(), preserveHostKey, true))
+			}
+		}
+		if bp, ok := pool.(*BackendPool); ok && bp != nil {
+			targetPool = bp
+			isCanary = canary
+		}
+	}
+
+	// 4. Edge Cache Check (GET/HEAD requests on canonical rewritten path)
 	if cacheEngine != nil {
 		if cached, hit := cacheEngine.Get(r); hit {
 			duration := time.Since(start)
@@ -510,17 +545,6 @@ func (s *L7Server) handleHTTP(w http.ResponseWriter, r *http.Request) {
 				})
 			}
 			return
-		}
-	}
-
-	// 4. L7 Routing & Canary Target Pool Selection
-	targetPool := s.pool
-	isCanary := false
-	if routerEngine != nil {
-		_, pool, canary, _ := routerEngine.Match(r)
-		if bp, ok := pool.(*BackendPool); ok && bp != nil {
-			targetPool = bp
-			isCanary = canary
 		}
 	}
 
@@ -608,6 +632,10 @@ func (s *L7Server) handleHTTP(w http.ResponseWriter, r *http.Request) {
 				Rewrite: func(pr *httputil.ProxyRequest) {
 					pr.SetURL(backend.URL)
 					pr.SetXForwarded()
+					preserve, _ := pr.In.Context().Value(preserveHostKey).(bool)
+					if !preserve {
+						pr.Out.Host = backend.URL.Host
+					}
 				},
 				Transport: s.transport,
 			}

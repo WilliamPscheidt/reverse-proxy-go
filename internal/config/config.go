@@ -141,14 +141,17 @@ type ResilienceConfig struct {
 	Retry          RetryConfig          `yaml:"retry"`
 }
 
-// RouteConfig defines L7 routing and canary splitting.
+// RouteConfig defines L7 routing, virtual hosts, path rewriting and dedicated backends.
 type RouteConfig struct {
-	ID           string   `yaml:"id"`
-	Host         string   `yaml:"host"`
-	PathPrefix   string   `yaml:"path_prefix"`
-	Methods      []string `yaml:"methods"`
-	CanaryWeight int      `yaml:"canary_weight"`
-	StripPrefix  bool     `yaml:"strip_prefix"`
+	ID            string          `yaml:"id" json:"id"`
+	Host          string          `yaml:"host" json:"host"`                     // e.g. "sub.example.com", "*.example.com", or "*"
+	PathPrefix    string          `yaml:"path_prefix" json:"path_prefix"`       // e.g. "/teste", "/api"
+	RewritePrefix string          `yaml:"rewrite_prefix" json:"rewrite_prefix"` // e.g. "/sitenovo"
+	StripPrefix   bool            `yaml:"strip_prefix" json:"strip_prefix"`     // e.g. true -> strips PathPrefix
+	Methods       []string        `yaml:"methods" json:"methods"`
+	CanaryWeight  int             `yaml:"canary_weight" json:"canary_weight"`
+	Backends      []BackendConfig `yaml:"backends" json:"backends"`             // Dedicated backends for this route
+	PreserveHost  bool            `yaml:"preserve_host" json:"preserve_host"`   // false = rewrite Host to upstream, true = preserve client Host
 }
 
 // DefaultConfig returns safe, high-performance defaults.

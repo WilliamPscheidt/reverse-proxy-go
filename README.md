@@ -115,9 +115,13 @@ Endpoint `/metrics` na porta `:2112` expondo:
 - **Geo-Blocking por País**: Capacidade de bloquear ou permitir países inteiros via código ISO de 2 letras.
 - **Bloqueio de Sub-redes CIDR**: Suporte a faixas de rede (ex: `10.0.0.0/8`, `192.168.100.0/24`).
 
-### 8. Roteamento L7 & Canary Deployments (Traffic Splitting)
-- **Roteamento Inteligente**: Casamento de requisições por Prefixo de Caminho (`/api`, `/auth`), Virtual Host / Domínio (`api.exemplo.com`) e métodos HTTP.
-- **Canary Releases**: Divisão percentual de tráfego (0% a 100%) entre a versão de produção estável (Primary) e a nova versão (Canary) com ajuste dinâmico no console administrativo.
+### 8. Roteamento L7 Avançado, Virtual Hosts, Subdomínios & Path Rewriting
+- **Virtual Hosts e Subdomínios**: Casamento determinístico por cabeçalho `Host` com suporte a subdomínios exatos (ex: `subdominio.blabla.com`) e curingas (ex: `*.blabla.com`).
+- **Pools de Backends Dedicados por Rota**: Cada rota pode definir sua própria lista de servidores upstream (`backends`), com balanceamento de carga e monitoramento de saúde isolados, desacoplados da pool padrão.
+- **Reescrita de Caminho (Path Rewrite)**: Transformação de URLs em trânsito com `rewrite_prefix` (ex: `localhost/teste/produtos` é reescrito e entregue ao backend como `/sitenovo/produtos`).
+- **Remoção de Prefixo (Strip Prefix)**: Suporte a `strip_prefix: true` (ex: `/api/v1/auth/login` vira `/auth/login` no backend).
+- **Tratamento do Cabeçalho Host (`preserve_host`)**: Por padrão (`preserve_host: false`), o cabeçalho `Host` é automaticamente ajustado para o hostname do backend de destino, permitindo conexões diretas a serviços de nuvem e VirtualHosts externos sem erro 404/400.
+- **Canary Deployments (Traffic Splitting)**: Divisão percentual de tráfego (0% a 100%) entre a versão de produção estável (Primary) e a nova versão (Canary) com ajuste dinâmico no console administrativo.
 
 ### 9. Resiliência: Circuit Breakers & Automatic Retries
 - **Tri-State Circuit Breaker**: Padrão de disjuntor com estados `CLOSED` (Normal), `OPEN` (Aberto/Protegendo) e `HALF_OPEN` (Em teste de recuperação) para cada servidor upstream. Se um backend falhar consecutivamente, o circuito desarma e responde com `503 Service Unavailable: Circuit Breaker Open` instantâneo sem onerar a rede.

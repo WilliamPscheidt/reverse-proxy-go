@@ -18,6 +18,7 @@ import (
 type BackendResponse struct {
 	Server    string            `json:"server"`
 	Status    string            `json:"status"`
+	Path      string            `json:"path,omitempty"`
 	Timestamp time.Time         `json:"timestamp"`
 	Headers   map[string]string `json:"headers,omitempty"`
 }
@@ -79,6 +80,7 @@ func main() {
 		resp := BackendResponse{
 			Server:    *name,
 			Status:    "success",
+			Path:      r.URL.Path,
 			Timestamp: time.Now(),
 			Headers:   headers,
 		}

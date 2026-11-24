@@ -3,6 +3,7 @@ package routing
 import (
 	"math/rand"
 	"net/http"
+	"path"
 	"sort"
 	"strings"
 	"sync"
@@ -12,12 +13,14 @@ import (
 
 // RouteConfig holds metadata and configuration for a route rule.
 type RouteConfig struct {
-	ID           string   `json:"id" yaml:"id"`
-	Host         string   `json:"host" yaml:"host"`                   // e.g. "api.example.com" or "*"
-	PathPrefix   string   `json:"path_prefix" yaml:"path_prefix"`     // e.g. "/api", "/auth"
-	Methods      []string `json:"methods" yaml:"methods"`             // e.g. ["GET", "POST"] or empty for all
-	CanaryWeight int      `json:"canary_weight" yaml:"canary_weight"` // 0 to 100 percentage
-	StripPrefix  bool     `json:"strip_prefix" yaml:"strip_prefix"`
+	ID            string   `json:"id" yaml:"id"`
+	Host          string   `json:"host" yaml:"host"`                   // e.g. "sub.example.com", "*.example.com", or "*"
+	PathPrefix    string   `json:"path_prefix" yaml:"path_prefix"`     // e.g. "/api", "/teste"
+	RewritePrefix string   `json:"rewrite_prefix" yaml:"rewrite_prefix"` // e.g. "/sitenovo"
+	StripPrefix   bool     `json:"strip_prefix" yaml:"strip_prefix"`
+	Methods       []string `json:"methods" yaml:"methods"`             // e.g. ["GET", "POST"] or empty for all
+	CanaryWeight  int      `json:"canary_weight" yaml:"canary_weight"` // 0 to 100 percentage
+	PreserveHost  bool     `json:"preserve_host" yaml:"preserve_host"` // true = keep client Host header, false = rewrite to upstream host
 }
 
 // Route represents a runtime routing entry with its associated target pools.
@@ -86,13 +89,107 @@ func (r *Router) AddRoute(cfg RouteConfig, primary any, canary any) *Route {
 	}
 	newRoutes = append(newRoutes, route)
 
-	// Sort routes: longest path prefix first so more specific routes match before general ones
+	// Sort routes so more specific routes match before general ones:
+	// 1. Non-wildcard host routes come before wildcard host ("*") routes
+	// 2. Exact host routes come before wildcard subdomain ("*.domain") routes
+	// 3. Longer PathPrefix routes come before shorter ones (/api/v2 > /api > /)
 	sort.Slice(newRoutes, func(i, j int) bool {
+		iWild := newRoutes[i].Config.Host == "*" || newRoutes[i].Config.Host == ""
+		jWild := newRoutes[j].Config.Host == "*" || newRoutes[j].Config.Host == ""
+		if iWild != jWild {
+			return !iWild
+		}
+
+		iSub := strings.HasPrefix(newRoutes[i].Config.Host, "*.")
+		jSub := strings.HasPrefix(newRoutes[j].Config.Host, "*.")
+		if iSub != jSub {
+			return !iSub
+		}
+
 		return len(newRoutes[i].Config.PathPrefix) > len(newRoutes[j].Config.PathPrefix)
 	})
 
 	r.routes = newRoutes
 	return route
+}
+
+// matchHost tests if request host matches the configured route host pattern.
+// Supports:
+// - "*" or empty: matches any host
+// - exact match: "api.example.com"
+// - wildcard subdomain: "*.example.com" (matches "sub.example.com", "sub.sub.example.com", etc.)
+// - glob pattern: "site-*.com"
+func matchHost(pattern, host string) bool {
+	if pattern == "*" || pattern == "" {
+		return true
+	}
+	pattern = strings.ToLower(pattern)
+	host = strings.ToLower(host)
+
+	// Exact match
+	if pattern == host {
+		return true
+	}
+
+	// Wildcard subdomain: *.domain.com
+	if strings.HasPrefix(pattern, "*.") {
+		domain := pattern[2:]
+		if strings.HasSuffix(host, "."+domain) || host == domain {
+			return true
+		}
+	}
+
+	// Glob pattern match
+	matched, err := path.Match(pattern, host)
+	if err == nil && matched {
+		return true
+	}
+
+	return false
+}
+
+// ApplyRewrite applies PathPrefix stripping or RewritePrefix replacement to req.URL.
+func (rt *Route) ApplyRewrite(req *http.Request) {
+	if rt == nil || req == nil || req.URL == nil {
+		return
+	}
+
+	origPath := req.URL.Path
+	if origPath == "" {
+		origPath = "/"
+	}
+
+	if rt.Config.RewritePrefix != "" {
+		prefix := rt.Config.PathPrefix
+		if prefix == "" {
+			prefix = "/"
+		}
+		if prefix == "/" {
+			req.URL.Path = strings.TrimSuffix(rt.Config.RewritePrefix, "/") + origPath
+		} else if strings.HasPrefix(origPath, prefix) {
+			suffix := strings.TrimPrefix(origPath, prefix)
+			var newPath string
+			if suffix == "" || suffix == "/" {
+				newPath = rt.Config.RewritePrefix
+				if suffix == "/" && !strings.HasSuffix(newPath, "/") {
+					newPath += "/"
+				}
+			} else {
+				newPath = strings.TrimSuffix(rt.Config.RewritePrefix, "/") + "/" + strings.TrimPrefix(suffix, "/")
+			}
+			req.URL.Path = newPath
+		}
+	} else if rt.Config.StripPrefix {
+		prefix := rt.Config.PathPrefix
+		if prefix != "" && prefix != "/" && strings.HasPrefix(origPath, prefix) {
+			stripped := strings.TrimPrefix(origPath, prefix)
+			if stripped == "" || !strings.HasPrefix(stripped, "/") {
+				stripped = "/" + stripped
+			}
+			req.URL.Path = stripped
+		}
+	}
+	req.URL.RawPath = req.URL.EscapedPath()
 }
 
 // RemoveRoute deletes a route rule by ID.
@@ -148,8 +245,8 @@ func (r *Router) Match(req *http.Request) (route *Route, pool any, isCanary bool
 	path := req.URL.Path
 
 	for _, rt := range r.routes {
-		// 1. Host match
-		if rt.Config.Host != "*" && !strings.EqualFold(rt.Config.Host, host) {
+		// 1. Host match (exact, wildcard subdomain *.blabla.com, or glob)
+		if !matchHost(rt.Config.Host, host) {
 			continue
 		}
 

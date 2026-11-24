@@ -103,9 +103,29 @@ resilience:
     initial_backoff: 25ms     # Exponential backoff base with jitter
     max_backoff: 150ms
 
-# L7 Dynamic Routing & Canary Traffic Splitting
+# L7 Dynamic Routing, Virtual Hosts & URL Rewriting
 routes:
+  # Rota 1: Subdomínio Virtual Host dedicado (ex: subdominio.blabla.com -> site1)
+  # Também aceita wildcard: "*.blabla.com"
+  - id: "subdomain-route"
+    host: "subdominio.blabla.com"
+    path_prefix: "/"
+    backends:
+      - url: "http://127.0.0.1:8085"
+        weight: 1
+
+  # Rota 2: Reescrita de Caminho (ex: localhost/teste -> /sitenovo)
+  # Requisições em /teste/abc chegam no backend como /sitenovo/abc
+  - id: "path-rewrite-route"
+    host: "*"
+    path_prefix: "/teste"
+    rewrite_prefix: "/sitenovo"
+    backends:
+      - url: "http://127.0.0.1:8085"
+        weight: 1
+
+  # Rota 3: Catch-all padrão com Canary Deployment (10% Canary, 90% Primary)
   - id: "default"
     host: "*"
     path_prefix: "/"
-    canary_weight: 10         # 10% of traffic directed to canary pool, 90% to primary
+    canary_weight: 10

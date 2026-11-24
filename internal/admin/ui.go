@@ -2404,7 +2404,7 @@ const dashboardHTML = `<!DOCTYPE html>
           '<tr>' +
             '<td class="mono" style="font-weight: 600; color: #fff;">' + r.config.id + '</td>' +
             '<td class="mono">' + (r.config.host || '*') + '</td>' +
-            '<td class="mono" style="color: #60a5fa;">' + r.config.path_prefix + '</td>' +
+            '<td class="mono" style="color: #60a5fa;">' + r.config.path_prefix + (r.config.rewrite_prefix ? ' <span style="color: #a78bfa; font-size: 11px;">➔ ' + r.config.rewrite_prefix + '</span>' : '') + (r.config.strip_prefix ? ' <span style="color: #f59e0b; font-size: 11px;">[strip]</span>' : '') + '</td>' +
             '<td>' + ((r.config.methods && r.config.methods.length) ? r.config.methods.join(', ') : 'ALL') + '</td>' +
             '<td><span class="badge" style="background: rgba(16, 185, 129, 0.15); color: #34d399; font-weight: 600;">' + r.config.canary_weight + '%</span></td>' +
             '<td class="mono">' + (r.total_hits || 0) + '</td>' +
