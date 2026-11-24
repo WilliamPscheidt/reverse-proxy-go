@@ -1,7 +1,9 @@
 package proxy
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -14,10 +16,14 @@ import (
 	"time"
 
 	"github.com/WilliamPscheidt/reverse-proxy-go/internal/analytics"
+	"github.com/WilliamPscheidt/reverse-proxy-go/internal/cache"
 	"github.com/WilliamPscheidt/reverse-proxy-go/internal/config"
 	"github.com/WilliamPscheidt/reverse-proxy-go/internal/metrics"
 	"github.com/WilliamPscheidt/reverse-proxy-go/internal/ratelimit"
+	"github.com/WilliamPscheidt/reverse-proxy-go/internal/resilience"
+	"github.com/WilliamPscheidt/reverse-proxy-go/internal/routing"
 	"github.com/WilliamPscheidt/reverse-proxy-go/internal/security"
+	"github.com/WilliamPscheidt/reverse-proxy-go/internal/stream"
 )
 
 // BalancerInterface abstracts load balancing algorithms for L7.
@@ -28,16 +34,22 @@ type BalancerInterface interface {
 
 // L7Server represents the HTTP reverse proxy and load balancer server.
 type L7Server struct {
-	mu          sync.RWMutex
-	config      config.L7Config
-	pool        *BackendPool
-	balancer    BalancerInterface
-	rateLimiter ratelimit.Limiter
-	metrics     *metrics.Metrics
-	analytics   *analytics.Analytics
-	blacklist   *security.Blacklist
-	transport   *http.Transport
-	httpServer  *http.Server
+	mu              sync.RWMutex
+	config          config.L7Config
+	pool            *BackendPool
+	balancer        BalancerInterface
+	rateLimiter     ratelimit.Limiter
+	metrics         *metrics.Metrics
+	analytics       *analytics.Analytics
+	blacklist       *security.Blacklist
+	waf             *security.WAF
+	router          *routing.Router
+	circuitRegistry *resilience.CircuitRegistry
+	retryPolicy     *resilience.RetryPolicy
+	cache           *cache.Cache
+	streamBroker    *stream.StreamBroker
+	transport       *http.Transport
+	httpServer      *http.Server
 }
 
 // NewL7Server creates and initializes an L7 HTTP Reverse Proxy server.
@@ -152,6 +164,77 @@ func (s *L7Server) GetBlacklist() *security.Blacklist {
 	return s.blacklist
 }
 
+// SetWAF registers the Web Application Firewall.
+func (s *L7Server) SetWAF(w *security.WAF) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.waf = w
+}
+
+// GetWAF returns the WAF engine.
+func (s *L7Server) GetWAF() *security.WAF {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.waf
+}
+
+// SetRouter registers the L7 router and canary manager.
+func (s *L7Server) SetRouter(r *routing.Router) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.router = r
+}
+
+// GetRouter returns the L7 router.
+func (s *L7Server) GetRouter() *routing.Router {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.router
+}
+
+// SetResilience registers the circuit breaker registry and retry policy.
+func (s *L7Server) SetResilience(cr *resilience.CircuitRegistry, rp *resilience.RetryPolicy) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.circuitRegistry = cr
+	s.retryPolicy = rp
+}
+
+// GetCircuitRegistry returns the circuit breaker registry.
+func (s *L7Server) GetCircuitRegistry() *resilience.CircuitRegistry {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.circuitRegistry
+}
+
+// SetCache registers the HTTP edge response cache.
+func (s *L7Server) SetCache(c *cache.Cache) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.cache = c
+}
+
+// GetCache returns the edge cache.
+func (s *L7Server) GetCache() *cache.Cache {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.cache
+}
+
+// SetStreamBroker registers the live request log stream broker.
+func (s *L7Server) SetStreamBroker(sb *stream.StreamBroker) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.streamBroker = sb
+}
+
+// GetStreamBroker returns the stream broker.
+func (s *L7Server) GetStreamBroker() *stream.StreamBroker {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.streamBroker
+}
+
 // SetBalancer dynamically updates the load balancing algorithm.
 func (s *L7Server) SetBalancer(bal BalancerInterface) {
 	s.mu.Lock()
@@ -206,38 +289,125 @@ func (s *L7Server) Shutdown(ctx context.Context) error {
 	return s.httpServer.Shutdown(ctx)
 }
 
-// statusWriter wraps http.ResponseWriter to intercept response status code and size.
-type statusWriter struct {
-	http.ResponseWriter
-	statusCode int
-	written    int64
+// bufferedRecorder intercepts headers and body in memory before committing to w.
+type bufferedRecorder struct {
+	header http.Header
+	code   int
+	body   bytes.Buffer
 }
 
-func (w *statusWriter) WriteHeader(code int) {
-	w.statusCode = code
-	w.ResponseWriter.WriteHeader(code)
+func newBufferedRecorder() *bufferedRecorder {
+	return &bufferedRecorder{header: make(http.Header)}
 }
 
-func (w *statusWriter) Write(b []byte) (int, error) {
-	if w.statusCode == 0 {
-		w.statusCode = http.StatusOK
+func (b *bufferedRecorder) Header() http.Header {
+	return b.header
+}
+
+func (b *bufferedRecorder) WriteHeader(code int) {
+	b.code = code
+}
+
+func (b *bufferedRecorder) Write(p []byte) (int, error) {
+	if b.code == 0 {
+		b.code = http.StatusOK
 	}
-	n, err := w.ResponseWriter.Write(b)
-	w.written += int64(n)
-	return n, err
+	return b.body.Write(p)
+}
+
+func (b *bufferedRecorder) FlushTo(w http.ResponseWriter) {
+	for k, vv := range b.header {
+		for _, v := range vv {
+			w.Header().Add(k, v)
+		}
+	}
+	code := b.code
+	if code == 0 {
+		code = http.StatusOK
+	}
+	w.WriteHeader(code)
+	_, _ = w.Write(b.body.Bytes())
 }
 
 func (s *L7Server) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	clientIP := getClientIP(r)
+	country := "US"
+	if s.analytics != nil {
+		country = s.analytics.ResolveCountry(clientIP)
+	}
 
-	// 0. Security Blacklist Check
-	if s.blacklist != nil && s.blacklist.IsBlocked(clientIP) {
+	reqID := fmt.Sprintf("req-%d", time.Now().UnixNano())
+	w.Header().Set("X-Request-ID", reqID)
+
+	s.mu.RLock()
+	wafEngine := s.waf
+	blEngine := s.blacklist
+	rlEngine := s.rateLimiter
+	routerEngine := s.router
+	circuitReg := s.circuitRegistry
+	retryPol := s.retryPolicy
+	cacheEngine := s.cache
+	streamBrk := s.streamBroker
+	s.mu.RUnlock()
+
+	// 0. Security WAF Inspection
+	if wafEngine != nil {
+		if blocked, rule, reason := wafEngine.Inspect(r, clientIP, country); blocked {
+			duration := time.Since(start)
+			if s.analytics != nil {
+				s.analytics.RecordRequest(clientIP, http.StatusForbidden)
+			}
+			if s.metrics != nil {
+				s.metrics.RecordHTTPRequest("waf", r.Method, http.StatusForbidden, duration)
+			}
+			if streamBrk != nil {
+				streamBrk.Publish(stream.RequestEvent{
+					ID:         reqID,
+					Timestamp:  start,
+					ClientIP:   clientIP,
+					Country:    country,
+					Method:     r.Method,
+					Path:       r.URL.Path,
+					StatusCode: http.StatusForbidden,
+					DurationMs: float64(duration.Microseconds()) / 1000.0,
+					Upstream:   "WAF_BLOCK",
+					WAFBlocked: true,
+					WAFRule:    rule,
+				})
+			}
+			w.Header().Set("Content-Type", "application/json; charset=utf-8")
+			w.WriteHeader(http.StatusForbidden)
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"error":    "Forbidden",
+				"waf_rule": rule,
+				"message":  reason,
+			})
+			return
+		}
+	}
+
+	// 1. Security Blacklist Check
+	if blEngine != nil && blEngine.IsBlocked(clientIP) {
+		duration := time.Since(start)
 		if s.analytics != nil {
 			s.analytics.RecordRequest(clientIP, http.StatusForbidden)
 		}
 		if s.metrics != nil {
-			s.metrics.RecordHTTPRequest("blacklist", r.Method, http.StatusForbidden, time.Since(start))
+			s.metrics.RecordHTTPRequest("blacklist", r.Method, http.StatusForbidden, duration)
+		}
+		if streamBrk != nil {
+			streamBrk.Publish(stream.RequestEvent{
+				ID:         reqID,
+				Timestamp:  start,
+				ClientIP:   clientIP,
+				Country:    country,
+				Method:     r.Method,
+				Path:       r.URL.Path,
+				StatusCode: http.StatusForbidden,
+				DurationMs: float64(duration.Microseconds()) / 1000.0,
+				Upstream:   "BLACKLIST",
+			})
 		}
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		w.WriteHeader(http.StatusForbidden)
@@ -245,82 +415,252 @@ func (s *L7Server) handleHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 1. Rate Limiting Check
-	if s.rateLimiter != nil && !s.rateLimiter.Allow(clientIP) {
+	// 2. Rate Limiting Check
+	if rlEngine != nil && !rlEngine.Allow(clientIP) {
+		duration := time.Since(start)
 		if s.analytics != nil {
 			s.analytics.RecordRequest(clientIP, http.StatusTooManyRequests)
 		}
 		if s.metrics != nil {
 			s.metrics.RecordRateLimitExceeded()
-			s.metrics.RecordHTTPRequest("ratelimit", r.Method, http.StatusTooManyRequests, time.Since(start))
+			s.metrics.RecordHTTPRequest("ratelimit", r.Method, http.StatusTooManyRequests, duration)
+		}
+		if streamBrk != nil {
+			streamBrk.Publish(stream.RequestEvent{
+				ID:         reqID,
+				Timestamp:  start,
+				ClientIP:   clientIP,
+				Country:    country,
+				Method:     r.Method,
+				Path:       r.URL.Path,
+				StatusCode: http.StatusTooManyRequests,
+				DurationMs: float64(duration.Microseconds()) / 1000.0,
+				Upstream:   "RATELIMIT",
+			})
 		}
 		w.Header().Set("Retry-After", "1")
 		http.Error(w, "Too Many Requests - Rate Limit Exceeded", http.StatusTooManyRequests)
 		return
 	}
 
-	// 2. Load Balancing Selection
-	bal := s.GetBalancer()
-	backend, err := bal.NextHTTP(s.pool, r, clientIP)
-	if err != nil {
-		if s.metrics != nil {
-			s.metrics.RecordHTTPRequest("none", r.Method, http.StatusServiceUnavailable, time.Since(start))
+	// 3. Edge Cache Check (GET/HEAD requests)
+	if cacheEngine != nil {
+		if cached, hit := cacheEngine.Get(r); hit {
+			duration := time.Since(start)
+			cacheEngine.ServeCached(w, r, cached)
+			if s.analytics != nil {
+				s.analytics.RecordRequest(clientIP, cached.StatusCode)
+			}
+			if s.metrics != nil {
+				s.metrics.RecordHTTPRequest("cache", r.Method, cached.StatusCode, duration)
+			}
+			if streamBrk != nil {
+				streamBrk.Publish(stream.RequestEvent{
+					ID:         reqID,
+					Timestamp:  start,
+					ClientIP:   clientIP,
+					Country:    country,
+					Method:     r.Method,
+					Path:       r.URL.Path,
+					StatusCode: cached.StatusCode,
+					DurationMs: float64(duration.Microseconds()) / 1000.0,
+					Upstream:   "CACHE_HIT",
+					CacheHit:   true,
+				})
+			}
+			return
 		}
-		http.Error(w, "Service Unavailable - No healthy backends", http.StatusServiceUnavailable)
-		return
 	}
 
-	// Track active connections
-	backend.IncConns()
-	backendHost := backend.Addr
-	if backend.URL != nil {
-		backendHost = backend.URL.Host
+	// 4. L7 Routing & Canary Target Pool Selection
+	targetPool := s.pool
+	isCanary := false
+	if routerEngine != nil {
+		_, pool, canary, _ := routerEngine.Match(r)
+		if bp, ok := pool.(*BackendPool); ok && bp != nil {
+			targetPool = bp
+			isCanary = canary
+		}
 	}
 
-	if s.metrics != nil {
-		s.metrics.IncHTTPActiveConn(backendHost)
+	// 5. Load Balancing & Resilience (Circuit Breaker & Automatic Retries)
+	bal := s.GetBalancer()
+	maxAttempts := 1
+	if retryPol != nil {
+		maxAttempts = 1 + retryPol.MaxRetries()
 	}
 
-	defer func() {
+	var lastRecorder *bufferedRecorder
+	var finalBackend *Backend
+	var lastErr error
+
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		backend, err := bal.NextHTTP(targetPool, r, clientIP)
+		if err != nil {
+			lastErr = err
+			break
+		}
+
+		backendHost := backend.Addr
+		if backend.URL != nil {
+			backendHost = backend.URL.Host
+		}
+
+		// Check Circuit Breaker for this backend
+		if circuitReg != nil {
+			cb := circuitReg.GetOrCreate(backendHost)
+			if !cb.Allow() {
+				// Circuit is open for this backend; retry on next backend if possible
+				if attempt < maxAttempts-1 {
+					continue
+				}
+				duration := time.Since(start)
+				if s.metrics != nil {
+					s.metrics.RecordHTTPRequest(backendHost, r.Method, http.StatusServiceUnavailable, duration)
+				}
+				if streamBrk != nil {
+					streamBrk.Publish(stream.RequestEvent{
+						ID:         reqID,
+						Timestamp:  start,
+						ClientIP:   clientIP,
+						Country:    country,
+						Method:     r.Method,
+						Path:       r.URL.Path,
+						StatusCode: http.StatusServiceUnavailable,
+						DurationMs: float64(duration.Microseconds()) / 1000.0,
+						Upstream:   backendHost + " [CIRCUIT_OPEN]",
+					})
+				}
+				http.Error(w, "Service Unavailable: Circuit Breaker Open", http.StatusServiceUnavailable)
+				return
+			}
+		}
+
+		finalBackend = backend
+		backend.IncConns()
+		if s.metrics != nil {
+			s.metrics.IncHTTPActiveConn(backendHost)
+		}
+
+		// Buffer backend response so retry can occur if 5xx occurs
+		bufRec := newBufferedRecorder()
+
+		if backend.ReverseProxy != nil {
+			backend.ReverseProxy.ServeHTTP(bufRec, r)
+		} else if backend.URL != nil {
+			rp := &httputil.ReverseProxy{
+				Rewrite: func(pr *httputil.ProxyRequest) {
+					pr.SetURL(backend.URL)
+					pr.SetXForwarded()
+				},
+				Transport: s.transport,
+			}
+			rp.ServeHTTP(bufRec, r)
+		}
+
 		backend.DecConns()
 		if s.metrics != nil {
 			s.metrics.DecHTTPActiveConn(backendHost)
 		}
-	}()
 
-	// 3. Wrap ResponseWriter to record status and latency
-	sw := &statusWriter{ResponseWriter: w}
-
-	if backend.ReverseProxy != nil {
-		backend.ReverseProxy.ServeHTTP(sw, r)
-	} else if backend.URL != nil {
-		// Fallback proxy creation if dynamic
-		targetURL := backend.URL
-		rp := &httputil.ReverseProxy{
-			Rewrite: func(pr *httputil.ProxyRequest) {
-				pr.SetURL(targetURL)
-				pr.SetXForwarded()
-			},
-			Transport: s.transport,
+		lastRecorder = bufRec
+		code := bufRec.code
+		if code == 0 {
+			code = http.StatusOK
 		}
-		rp.ServeHTTP(sw, r)
-	} else {
-		http.Error(w, "Bad Gateway", http.StatusBadGateway)
-		sw.statusCode = http.StatusBadGateway
+
+		// Update circuit breaker
+		if circuitReg != nil {
+			cb := circuitReg.GetOrCreate(backendHost)
+			if code >= 500 {
+				cb.RecordFailure()
+			} else {
+				cb.RecordSuccess()
+			}
+		}
+
+		// Check retryability
+		if retryPol != nil && retryPol.IsRetryable(r, code, nil) && attempt < maxAttempts-1 {
+			time.Sleep(retryPol.BackoffDuration(attempt))
+			continue
+		}
+
+		// Success or non-retryable response
+		break
 	}
 
-	// 5. Record Prometheus Metrics & Analytics
-	code := sw.statusCode
-	if code == 0 {
-		code = http.StatusOK
+	duration := time.Since(start)
+
+	if lastRecorder != nil {
+		code := lastRecorder.code
+		if code == 0 {
+			code = http.StatusOK
+		}
+
+		// Store in Edge Cache if eligible
+		if cacheEngine != nil && code == http.StatusOK {
+			cacheEngine.Put(r, code, lastRecorder.header, lastRecorder.body.Bytes())
+		}
+
+		// Commit to client
+		lastRecorder.FlushTo(w)
+
+		backendHost := "unknown"
+		if finalBackend != nil {
+			backendHost = finalBackend.Addr
+			if finalBackend.URL != nil {
+				backendHost = finalBackend.URL.Host
+			}
+			if isCanary {
+				backendHost += " [CANARY]"
+			}
+		}
+
+		if s.analytics != nil {
+			s.analytics.RecordRequest(clientIP, code)
+		}
+		if s.metrics != nil {
+			s.metrics.RecordHTTPRequest(backendHost, r.Method, code, duration)
+		}
+		if streamBrk != nil {
+			streamBrk.Publish(stream.RequestEvent{
+				ID:         reqID,
+				Timestamp:  start,
+				ClientIP:   clientIP,
+				Country:    country,
+				Method:     r.Method,
+				Path:       r.URL.Path,
+				StatusCode: code,
+				DurationMs: float64(duration.Microseconds()) / 1000.0,
+				Upstream:   backendHost,
+			})
+		}
+		return
 	}
-	if s.analytics != nil {
-		s.analytics.RecordRequest(clientIP, code)
-	}
+
+	// If all attempts failed or pool exhausted
+	code := http.StatusServiceUnavailable
 	if s.metrics != nil {
-		duration := time.Since(start)
-		s.metrics.RecordHTTPRequest(backendHost, r.Method, code, duration)
+		s.metrics.RecordHTTPRequest("none", r.Method, code, duration)
 	}
+	if streamBrk != nil {
+		streamBrk.Publish(stream.RequestEvent{
+			ID:         reqID,
+			Timestamp:  start,
+			ClientIP:   clientIP,
+			Country:    country,
+			Method:     r.Method,
+			Path:       r.URL.Path,
+			StatusCode: code,
+			DurationMs: float64(duration.Microseconds()) / 1000.0,
+			Upstream:   "FAILED",
+		})
+	}
+	errMsg := "Service Unavailable - No healthy backends"
+	if lastErr != nil {
+		errMsg = fmt.Sprintf("Service Unavailable: %v", lastErr)
+	}
+	http.Error(w, errMsg, http.StatusServiceUnavailable)
 }
 
 // setProxyHeaders sets or appends standard proxy forwarding headers.

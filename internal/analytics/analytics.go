@@ -110,6 +110,16 @@ func (a *Analytics) Reset() {
 	}
 }
 
+// ResolveCountry returns the 2-letter country code for an IP.
+func (a *Analytics) ResolveCountry(clientIP string) string {
+	cleanIP := sanitizeIP(clientIP)
+	geoKey := resolveGeoRegion(cleanIP)
+	if len(geoKey) >= 2 {
+		return geoKey[:2]
+	}
+	return "US"
+}
+
 // RecordRequest tracks an incoming HTTP request with its status and client IP.
 func (a *Analytics) RecordRequest(clientIP string, statusCode int) {
 	now := time.Now()

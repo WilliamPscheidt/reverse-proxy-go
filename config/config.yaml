@@ -70,3 +70,39 @@ timeouts:
   dial_timeout: 2s
   max_idle_conns: 10000
   max_idle_conns_per_host: 2500
+
+# Web Application Firewall (WAF) & Security
+waf:
+  enabled: true
+  block_sqli: true            # Intercepts SQL Injection signatures
+  block_xss: true             # Intercepts Cross-Site Scripting payloads
+  block_path_traversal: true  # Blocks ../, /etc/passwd, and system directory traversal
+  block_bad_bots: true        # Intercepts sqlmap, nikto, masscan, scanners
+  blocked_countries: []       # ISO 2-letter country codes (e.g. ["RU", "CN"])
+  allowed_countries: []       # Whitelist mode (e.g. ["BR", "US"])
+  blocked_cidrs: []           # CIDR subnets (e.g. ["10.0.0.0/8", "192.168.100.0/24"])
+
+# HTTP Edge Cache (In-Memory + Redis)
+cache:
+  enabled: true
+  default_ttl: 60s            # Default cache expiration for GET/HEAD 200 OK
+  max_entries: 10000          # Maximum entries in local memory
+
+# High-Availability & Resilience (Circuit Breaker & Automatic Retries)
+resilience:
+  circuit_breaker:
+    failure_threshold: 5      # Consecutive failures to trip circuit OPEN
+    success_threshold: 2      # Consecutive successes in HALF_OPEN to CLOSE
+    cooldown: 5s              # Cooldown period before trial in HALF_OPEN
+  retry:
+    enabled: true
+    max_retries: 2            # Retries on next backend for 502/503/504
+    initial_backoff: 25ms     # Exponential backoff base with jitter
+    max_backoff: 150ms
+
+# L7 Dynamic Routing & Canary Traffic Splitting
+routes:
+  - id: "default"
+    host: "*"
+    path_prefix: "/"
+    canary_weight: 10         # 10% of traffic directed to canary pool, 90% to primary

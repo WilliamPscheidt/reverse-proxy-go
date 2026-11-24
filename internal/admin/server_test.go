@@ -11,10 +11,14 @@ import (
 
 	"github.com/WilliamPscheidt/reverse-proxy-go/internal/analytics"
 	"github.com/WilliamPscheidt/reverse-proxy-go/internal/balancer"
+	"github.com/WilliamPscheidt/reverse-proxy-go/internal/cache"
 	"github.com/WilliamPscheidt/reverse-proxy-go/internal/config"
 	"github.com/WilliamPscheidt/reverse-proxy-go/internal/metrics"
 	"github.com/WilliamPscheidt/reverse-proxy-go/internal/proxy"
+	"github.com/WilliamPscheidt/reverse-proxy-go/internal/resilience"
+	"github.com/WilliamPscheidt/reverse-proxy-go/internal/routing"
 	"github.com/WilliamPscheidt/reverse-proxy-go/internal/security"
+	"github.com/WilliamPscheidt/reverse-proxy-go/internal/stream"
 )
 
 func setupTestAdminServer() (*Server, *proxy.L7Server, *proxy.L4Server) {
@@ -32,6 +36,19 @@ func setupTestAdminServer() (*Server, *proxy.L7Server, *proxy.L4Server) {
 	l7 := proxy.NewL7Server(cfg.L7, cfg.Timeouts, pool7, bal7, nil, m)
 	l7.SetAnalytics(a)
 	l7.SetBlacklist(bl)
+
+	waf := security.NewWAF(security.DefaultWAFConfig())
+	c := cache.NewCache(cache.DefaultCacheConfig(), nil)
+	r := routing.NewRouter(pool7)
+	cr := resilience.NewCircuitRegistry(resilience.DefaultCircuitConfig())
+	rp := resilience.NewRetryPolicy(resilience.DefaultRetryConfig())
+	sb := stream.NewStreamBroker(10)
+
+	l7.SetWAF(waf)
+	l7.SetCache(c)
+	l7.SetRouter(r)
+	l7.SetResilience(cr, rp)
+	l7.SetStreamBroker(sb)
 
 	// L4
 	b2 := proxy.NewBackend(nil, "127.0.0.1:9081", 1)
@@ -248,5 +265,56 @@ func TestAdmin_Blacklist(t *testing.T) {
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200 OK, got %d", rec.Code)
+	}
+}
+
+func TestAdmin_WAF_Cache_Routes_APIs(t *testing.T) {
+	srv, _, _ := setupTestAdminServer()
+
+	// 1. Test WAF GET
+	req := httptest.NewRequest(http.MethodGet, "/api/waf", nil)
+	rec := httptest.NewRecorder()
+	srv.httpServer.Handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK for /api/waf, got %d", rec.Code)
+	}
+
+	// 2. Test Cache Stats and Purge
+	req = httptest.NewRequest(http.MethodGet, "/api/cache", nil)
+	rec = httptest.NewRecorder()
+	srv.httpServer.Handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK for /api/cache, got %d", rec.Code)
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/api/cache/purge?pattern=*", nil)
+	rec = httptest.NewRecorder()
+	srv.httpServer.Handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK for /api/cache/purge, got %d", rec.Code)
+	}
+
+	// 3. Test Routes API
+	req = httptest.NewRequest(http.MethodGet, "/api/routes", nil)
+	rec = httptest.NewRecorder()
+	srv.httpServer.Handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK for /api/routes, got %d", rec.Code)
+	}
+
+	// 4. Test Circuit Breakers API
+	req = httptest.NewRequest(http.MethodGet, "/api/circuit-breakers", nil)
+	rec = httptest.NewRecorder()
+	srv.httpServer.Handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK for /api/circuit-breakers, got %d", rec.Code)
+	}
+
+	// 5. Test Stream History API
+	req = httptest.NewRequest(http.MethodGet, "/api/stream/history", nil)
+	rec = httptest.NewRecorder()
+	srv.httpServer.Handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK for /api/stream/history, got %d", rec.Code)
 	}
 }

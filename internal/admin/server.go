@@ -11,24 +11,33 @@ import (
 
 	"github.com/WilliamPscheidt/reverse-proxy-go/internal/analytics"
 	"github.com/WilliamPscheidt/reverse-proxy-go/internal/balancer"
+	"github.com/WilliamPscheidt/reverse-proxy-go/internal/cache"
 	"github.com/WilliamPscheidt/reverse-proxy-go/internal/config"
 	"github.com/WilliamPscheidt/reverse-proxy-go/internal/metrics"
 	"github.com/WilliamPscheidt/reverse-proxy-go/internal/proxy"
 	"github.com/WilliamPscheidt/reverse-proxy-go/internal/ratelimit"
+	"github.com/WilliamPscheidt/reverse-proxy-go/internal/resilience"
+	"github.com/WilliamPscheidt/reverse-proxy-go/internal/routing"
 	"github.com/WilliamPscheidt/reverse-proxy-go/internal/security"
+	"github.com/WilliamPscheidt/reverse-proxy-go/internal/stream"
 )
 
 // Server handles administrative web dashboard and REST API endpoints.
 type Server struct {
-	cfg         *config.Config
-	l7Server    *proxy.L7Server
-	l4Server    *proxy.L4Server
-	rateLimiter ratelimit.Limiter
-	metrics     *metrics.Metrics
-	analytics   *analytics.Analytics
-	blacklist   *security.Blacklist
-	httpServer  *http.Server
-	startTime   time.Time
+	cfg             *config.Config
+	l7Server        *proxy.L7Server
+	l4Server        *proxy.L4Server
+	rateLimiter     ratelimit.Limiter
+	metrics         *metrics.Metrics
+	analytics       *analytics.Analytics
+	blacklist       *security.Blacklist
+	waf             *security.WAF
+	router          *routing.Router
+	circuitRegistry *resilience.CircuitRegistry
+	cache           *cache.Cache
+	streamBroker    *stream.StreamBroker
+	httpServer      *http.Server
+	startTime       time.Time
 }
 
 // NewServer creates a new Admin Server instance.
@@ -52,6 +61,14 @@ func NewServer(
 		startTime:   time.Now(),
 	}
 
+	if l7 != nil {
+		s.waf = l7.GetWAF()
+		s.router = l7.GetRouter()
+		s.circuitRegistry = l7.GetCircuitRegistry()
+		s.cache = l7.GetCache()
+		s.streamBroker = l7.GetStreamBroker()
+	}
+
 	mux := http.NewServeMux()
 
 	// Web UI
@@ -69,6 +86,16 @@ func NewServer(
 	mux.HandleFunc("/api/backends/toggle", s.handleAPIToggleBackend)
 	mux.HandleFunc("/api/algorithm", s.handleAPISetAlgorithm)
 	mux.HandleFunc("/api/ratelimit", s.handleAPISetRateLimit)
+
+	// Real-Time Stream, WAF, Cache, Routes, Circuit Breakers
+	mux.HandleFunc("/api/stream/requests", s.handleAPIStreamRequests)
+	mux.HandleFunc("/api/stream/history", s.handleAPIStreamHistory)
+	mux.HandleFunc("/api/waf", s.handleAPIWAF)
+	mux.HandleFunc("/api/cache", s.handleAPICache)
+	mux.HandleFunc("/api/cache/purge", s.handleAPICachePurge)
+	mux.HandleFunc("/api/routes", s.handleAPIRoutes)
+	mux.HandleFunc("/api/routes/canary", s.handleAPIRoutesCanary)
+	mux.HandleFunc("/api/circuit-breakers", s.handleAPICircuitBreakers)
 
 	s.httpServer = &http.Server{
 		Addr:    cfg.Admin.Listen,
@@ -570,4 +597,133 @@ func (s *Server) handleAPISettings(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+// SetWAF sets the WAF engine.
+func (s *Server) SetWAF(w *security.WAF) { s.waf = w }
+
+// SetRouter sets the L7 router.
+func (s *Server) SetRouter(r *routing.Router) { s.router = r }
+
+// SetCircuitRegistry sets the resilience circuit registry.
+func (s *Server) SetCircuitRegistry(cr *resilience.CircuitRegistry) { s.circuitRegistry = cr }
+
+// SetCache sets the edge cache.
+func (s *Server) SetCache(c *cache.Cache) { s.cache = c }
+
+// SetStreamBroker sets the live stream broker.
+func (s *Server) SetStreamBroker(sb *stream.StreamBroker) { s.streamBroker = sb }
+
+func (s *Server) handleAPIStreamRequests(w http.ResponseWriter, r *http.Request) {
+	if s.streamBroker == nil {
+		http.Error(w, "Stream broker not initialized", http.StatusServiceUnavailable)
+		return
+	}
+	s.streamBroker.ServeSSE(w, r)
+}
+
+func (s *Server) handleAPIStreamHistory(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	if s.streamBroker == nil {
+		_ = json.NewEncoder(w).Encode([]any{})
+		return
+	}
+	_ = json.NewEncoder(w).Encode(s.streamBroker.GetRecentHistory())
+}
+
+func (s *Server) handleAPIWAF(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	if s.waf == nil {
+		_ = json.NewEncoder(w).Encode(map[string]any{"enabled": false})
+		return
+	}
+	if r.Method == http.MethodPost {
+		var newCfg security.WAFConfig
+		if err := json.NewDecoder(r.Body).Decode(&newCfg); err != nil {
+			http.Error(w, "Invalid JSON payload", http.StatusBadRequest)
+			return
+		}
+		s.waf.UpdateConfig(newCfg)
+		_ = json.NewEncoder(w).Encode(map[string]any{"status": "updated", "config": s.waf.GetConfig()})
+		return
+	}
+
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"config": s.waf.GetConfig(),
+		"stats":  s.waf.GetStats(),
+	})
+}
+
+func (s *Server) handleAPICache(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	if s.cache == nil {
+		_ = json.NewEncoder(w).Encode(map[string]any{"enabled": false})
+		return
+	}
+	_ = json.NewEncoder(w).Encode(s.cache.Stats())
+}
+
+func (s *Server) handleAPICachePurge(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	if s.cache == nil {
+		http.Error(w, "Cache not enabled", http.StatusBadRequest)
+		return
+	}
+	pattern := r.URL.Query().Get("pattern")
+	if pattern == "" && r.Method == http.MethodPost {
+		var req struct {
+			Pattern string `json:"pattern"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		pattern = req.Pattern
+	}
+	if pattern == "" {
+		pattern = "*"
+	}
+	purged := s.cache.Purge(pattern)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"status":  "purged",
+		"pattern": pattern,
+		"count":   purged,
+	})
+}
+
+func (s *Server) handleAPIRoutes(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	if s.router == nil {
+		_ = json.NewEncoder(w).Encode([]any{})
+		return
+	}
+	_ = json.NewEncoder(w).Encode(s.router.ListRoutes())
+}
+
+func (s *Server) handleAPIRoutesCanary(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	if s.router == nil {
+		http.Error(w, "Router not enabled", http.StatusBadRequest)
+		return
+	}
+	var req struct {
+		ID     string `json:"id"`
+		Weight int    `json:"weight"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid JSON payload", http.StatusBadRequest)
+		return
+	}
+	ok := s.router.SetCanaryWeight(req.ID, req.Weight)
+	if !ok {
+		http.Error(w, "Route not found", http.StatusNotFound)
+		return
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{"status": "updated", "id": req.ID, "weight": req.Weight})
+}
+
+func (s *Server) handleAPICircuitBreakers(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	if s.circuitRegistry == nil {
+		_ = json.NewEncoder(w).Encode([]any{})
+		return
+	}
+	_ = json.NewEncoder(w).Encode(s.circuitRegistry.ListStats())
 }

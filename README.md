@@ -106,6 +106,32 @@ Endpoint `/metrics` na porta `:2112` expondo:
 - **Interação Geográfica no Mapa**: Ao clicar em qualquer região azul no mapa mundial, um modal abre listando todos os IPs detectados naquela região geográfica com botões de bloqueio e desbloqueio em tempo real.
 - **Persistência Distribuída com Redis**: Bloqueios podem ser sincronizados via Redis (`proxy:blacklist:<ip>`) com fallback de altíssima performance em memória (`sync.RWMutex`).
 
+### 7. Web Application Firewall (WAF) & Geo-Blocking
+- **Inspeção de Ameaças em Tempo Real**: Motor regex de alta velocidade que intercepta:
+  - **SQL Injection (SQLi)**: assinaturas de `UNION SELECT`, `OR 1=1`, `DROP TABLE`, etc.
+  - **Cross-Site Scripting (XSS)**: tags de `<script>`, `javascript:`, `onerror=`, handlers de eventos.
+  - **Path Traversal & LFI**: tentativas de navegação `../`, `/etc/passwd` e arquivos de sistema.
+  - **Bad Bots & Scanners**: identificação e bloqueio de `sqlmap`, `nikto`, `masscan`, `nmap`.
+- **Geo-Blocking por País**: Capacidade de bloquear ou permitir países inteiros via código ISO de 2 letras.
+- **Bloqueio de Sub-redes CIDR**: Suporte a faixas de rede (ex: `10.0.0.0/8`, `192.168.100.0/24`).
+
+### 8. Roteamento L7 & Canary Deployments (Traffic Splitting)
+- **Roteamento Inteligente**: Casamento de requisições por Prefixo de Caminho (`/api`, `/auth`), Virtual Host / Domínio (`api.exemplo.com`) e métodos HTTP.
+- **Canary Releases**: Divisão percentual de tráfego (0% a 100%) entre a versão de produção estável (Primary) e a nova versão (Canary) com ajuste dinâmico no console administrativo.
+
+### 9. Resiliência: Circuit Breakers & Automatic Retries
+- **Tri-State Circuit Breaker**: Padrão de disjuntor com estados `CLOSED` (Normal), `OPEN` (Aberto/Protegendo) e `HALF_OPEN` (Em teste de recuperação) para cada servidor upstream. Se um backend falhar consecutivamente, o circuito desarma e responde com `503 Service Unavailable: Circuit Breaker Open` instantâneo sem onerar a rede.
+- **Automatic Retries com Jitter**: Em caso de falha transitória (status 502/503/504 ou timeout), o proxy reencaminha automaticamente a requisição para o próximo nó saudável da pool com backoff exponencial e jitter aleatório.
+
+### 10. Edge Cache Distribuído (In-Memory + Redis)
+- **Aceleração Sub-Milissegundo**: Cache de requisições idempotentes (`GET`/`HEAD` 200 OK) entregando respostas em menos de **0.3ms** direto da memória com cabeçalho `X-ProxyGO-Cache: HIT`.
+- **Validação Condicional HTTP (RFC 7234)**: Geração automática de `ETag` e suporte a `If-None-Match`, respondendo com `304 Not Modified` com payload zero.
+- **Invalidação Dinâmica (Purge API)**: Endpoint `POST /api/cache/purge?pattern=*` para limpeza sob demanda.
+
+### 11. Feed de Logs ao Vivo (Server-Sent Events / SSE)
+- **Streaming em Tempo Real**: Canal SSE em `/api/stream/requests` transmitindo cada requisição processada com latência, IP do cliente, país, status HTTP, rota e regra do WAF/Cache.
+- **Console Interativo**: Aba de logs ao vivo no dashboard com filtros rápidos por texto, pausa/retomada de feed e buffer circular em memória dos últimos eventos.
+
 ---
 
 ## 📦 Como Usar

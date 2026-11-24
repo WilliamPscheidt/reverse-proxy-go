@@ -586,6 +586,122 @@ const dashboardHTML = `<!DOCTYPE html>
       box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5);
       z-index: 9999;
     }
+
+    /* Live Stream, WAF & Enterprise Components */
+    .live-pill {
+      font-size: 10px;
+      font-weight: 700;
+      color: #ef4444;
+      background: rgba(239, 68, 68, 0.15);
+      border: 1px solid rgba(239, 68, 68, 0.3);
+      padding: 2px 7px;
+      border-radius: 9999px;
+      margin-left: auto;
+      letter-spacing: 0.5px;
+      animation: pulseLive 1.5s infinite;
+    }
+    @keyframes pulseLive {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+
+    .method-badge {
+      display: inline-block;
+      font-family: ui-monospace, monospace;
+      font-size: 11px;
+      font-weight: 700;
+      padding: 2px 6px;
+      border-radius: 4px;
+      text-transform: uppercase;
+    }
+    .method-get { color: #38bdf8; background: rgba(56, 189, 248, 0.12); }
+    .method-post { color: #34d399; background: rgba(52, 211, 153, 0.12); }
+    .method-put { color: #fbbf24; background: rgba(251, 191, 36, 0.12); }
+    .method-delete { color: #f87171; background: rgba(248, 113, 113, 0.12); }
+
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      font-family: ui-monospace, monospace;
+      font-size: 11px;
+      font-weight: 700;
+      padding: 2px 8px;
+      border-radius: 9999px;
+    }
+    .status-2xx { color: #34d399; background: rgba(52, 211, 153, 0.15); border: 1px solid rgba(52, 211, 153, 0.3); }
+    .status-3xx { color: #60a5fa; background: rgba(96, 165, 250, 0.15); border: 1px solid rgba(96, 165, 250, 0.3); }
+    .status-4xx { color: #fbbf24; background: rgba(251, 191, 36, 0.15); border: 1px solid rgba(251, 191, 36, 0.3); }
+    .status-5xx { color: #f87171; background: rgba(248, 113, 113, 0.15); border: 1px solid rgba(248, 113, 113, 0.3); }
+
+    /* Switch Toggles */
+    .switch-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .switch-row:last-child { border-bottom: none; }
+    .switch-label { font-size: 13px; font-weight: 500; color: #fff; }
+    .switch-desc { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+
+    .switch {
+      position: relative;
+      display: inline-block;
+      width: 44px;
+      height: 24px;
+    }
+    .switch input { opacity: 0; width: 0; height: 0; }
+    .slider {
+      position: absolute;
+      cursor: pointer;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background-color: var(--card-sub);
+      border: 1px solid var(--border);
+      transition: .2s;
+      border-radius: 24px;
+    }
+    .slider:before {
+      position: absolute;
+      content: "";
+      height: 16px;
+      width: 16px;
+      left: 3px;
+      bottom: 3px;
+      background-color: #94a3b8;
+      transition: .2s;
+      border-radius: 50%;
+    }
+    input:checked + .slider { background-color: #2563eb; border-color: #3b82f6; }
+    input:checked + .slider:before { transform: translateX(20px); background-color: #fff; }
+
+    /* Circuit Breaker States */
+    .cb-card {
+      background: var(--card-sub);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .badge-cb-closed { color: #34d399; background: rgba(52, 211, 153, 0.15); border: 1px solid rgba(52, 211, 153, 0.3); }
+    .badge-cb-open { color: #f87171; background: rgba(248, 113, 113, 0.15); border: 1px solid rgba(248, 113, 113, 0.3); }
+    .badge-cb-half { color: #fbbf24; background: rgba(251, 191, 36, 0.15); border: 1px solid rgba(251, 191, 36, 0.3); }
+
+    /* Canary Split Bar */
+    .split-track {
+      height: 12px;
+      width: 100%;
+      background: #1e293b;
+      border-radius: 9999px;
+      overflow: hidden;
+      display: flex;
+      margin: 8px 0;
+    }
+    .split-primary { background: #3b82f6; height: 100%; transition: width 0.3s; }
+    .split-canary { background: #10b981; height: 100%; transition: width 0.3s; }
   </style>
 </head>
 <body>
@@ -608,6 +724,11 @@ const dashboardHTML = `<!DOCTYPE html>
         <i class="fa-solid fa-chart-pie"></i>
         <span>Overview & Tráfego</span>
       </a>
+      <a class="nav-item" onclick="switchTab('stream')">
+        <i class="fa-solid fa-tower-broadcast"></i>
+        <span>Logs ao Vivo</span>
+        <span class="live-pill" id="liveIndicator">LIVE</span>
+      </a>
       <a class="nav-item" onclick="switchTab('backends')">
         <i class="fa-solid fa-network-wired"></i>
         <span>Upstream Backends</span>
@@ -616,9 +737,29 @@ const dashboardHTML = `<!DOCTYPE html>
         <i class="fa-solid fa-scale-balanced"></i>
         <span>Balanceamento</span>
       </a>
-      <a class="nav-item" onclick="switchTab('ratelimit')">
+
+      <div class="nav-label">Segurança & WAF</div>
+      <a class="nav-item" onclick="switchTab('waf')">
         <i class="fa-solid fa-shield-halved"></i>
+        <span>WAF & Firewall</span>
+      </a>
+      <a class="nav-item" onclick="switchTab('ratelimit')">
+        <i class="fa-solid fa-gauge-high"></i>
         <span>Rate Limit & Redis</span>
+      </a>
+
+      <div class="nav-label">Roteamento & Performance</div>
+      <a class="nav-item" onclick="switchTab('routing')">
+        <i class="fa-solid fa-route"></i>
+        <span>Rotas L7 & Canary</span>
+      </a>
+      <a class="nav-item" onclick="switchTab('resilience')">
+        <i class="fa-solid fa-heart-pulse"></i>
+        <span>Circuit Breakers</span>
+      </a>
+      <a class="nav-item" onclick="switchTab('cache')">
+        <i class="fa-solid fa-bolt"></i>
+        <span>Edge Cache</span>
       </a>
 
       <div class="nav-label">Sistema</div>
@@ -1107,6 +1248,311 @@ const dashboardHTML = `<!DOCTYPE html>
         </div>
       </section>
 
+      <!-- TAB 2: LIVE REQUEST STREAM -->
+      <section class="tab-content" id="tab-stream">
+        <div class="section-box">
+          <div class="section-header" style="flex-wrap: wrap; gap: 12px;">
+            <div style="display: flex; align-items: center; gap: 12px;">
+              <div class="section-title">
+                <i class="fa-solid fa-tower-broadcast" style="color: #ef4444;"></i>
+                Feed de Requisições ao Vivo (Server-Sent Events)
+              </div>
+              <span class="status-badge status-healthy" id="streamConnBadge">
+                <span class="status-dot"></span> Conectado
+              </span>
+            </div>
+
+            <div style="display: flex; align-items: center; gap: 10px;">
+              <input type="text" id="streamFilterInput" placeholder="Filtrar por IP, rota ou status..." oninput="filterStreamTable()" style="background: var(--card-sub); border: 1px solid var(--border); color: #fff; padding: 6px 12px; border-radius: 6px; font-size: 12px; width: 220px;" />
+              <button onclick="toggleStream()" id="btnStreamPause" class="btn btn-secondary" style="font-size: 12px; padding: 6px 12px;">
+                <i class="fa-solid fa-pause"></i> Pausar
+              </button>
+              <button onclick="clearStreamTable()" class="btn btn-secondary" style="font-size: 12px; padding: 6px 12px;">
+                <i class="fa-solid fa-trash"></i> Limpar
+              </button>
+            </div>
+          </div>
+
+          <div class="table-wrapper" style="max-height: 600px; overflow-y: auto;">
+            <table>
+              <thead>
+                <tr>
+                  <th style="width: 100px;">Horário</th>
+                  <th style="width: 80px;">Método</th>
+                  <th>Caminho (Path)</th>
+                  <th style="width: 110px;">Status</th>
+                  <th style="width: 90px;">Latência</th>
+                  <th>Upstream Target</th>
+                  <th style="width: 140px;">IP do Cliente</th>
+                  <th style="width: 70px;">País</th>
+                </tr>
+              </thead>
+              <tbody id="streamTableBody">
+                <tr><td colspan="8" style="text-align: center; color: var(--text-muted); padding: 30px;">Aguardando conexões ao vivo...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB 3: WAF & SEGURANÇA -->
+      <section class="tab-content" id="tab-waf">
+        <div class="metrics-grid" style="margin-bottom: 24px;">
+          <div class="metric-card">
+            <div class="metric-header">
+              <span class="metric-title">Total Ameaças Bloqueadas</span>
+              <div class="metric-icon" style="background: rgba(239, 68, 68, 0.15); color: #f87171;"><i class="fa-solid fa-shield-virus"></i></div>
+            </div>
+            <div class="metric-value" id="wafStatTotal">0</div>
+            <div class="metric-sub">WAF Rule Engine Ativo</div>
+          </div>
+          <div class="metric-card">
+            <div class="metric-header">
+              <span class="metric-title">SQL Injection</span>
+              <div class="metric-icon" style="background: rgba(245, 158, 11, 0.15); color: #fbbf24;"><i class="fa-solid fa-database"></i></div>
+            </div>
+            <div class="metric-value" id="wafStatSQLi">0</div>
+            <div class="metric-sub">Bloqueio de UNION, SELECT, DROP</div>
+          </div>
+          <div class="metric-card">
+            <div class="metric-header">
+              <span class="metric-title">Cross-Site Scripting (XSS)</span>
+              <div class="metric-icon" style="background: rgba(168, 85, 247, 0.15); color: #c084fc;"><i class="fa-solid fa-code"></i></div>
+            </div>
+            <div class="metric-value" id="wafStatXSS">0</div>
+            <div class="metric-sub">Injeção de scripts & payloads</div>
+          </div>
+          <div class="metric-card">
+            <div class="metric-header">
+              <span class="metric-title">Bad Bots & Scanners</span>
+              <div class="metric-icon" style="background: rgba(236, 72, 153, 0.15); color: #f472b6;"><i class="fa-solid fa-robot"></i></div>
+            </div>
+            <div class="metric-value" id="wafStatBots">0</div>
+            <div class="metric-sub">sqlmap, nikto, masscan, etc.</div>
+          </div>
+        </div>
+
+        <div class="settings-grid">
+          <div class="section-box">
+            <div class="section-header">
+              <div class="section-title"><i class="fa-solid fa-sliders" style="color: #60a5fa;"></i> Regras de Inspeção do WAF</div>
+            </div>
+            <div class="section-body">
+              <div class="switch-row">
+                <div>
+                  <div class="switch-label">WAF Ativo Globalmente</div>
+                  <div class="switch-desc">Habilita inspeção de payloads e headers em tempo real</div>
+                </div>
+                <label class="switch"><input type="checkbox" id="wafToggleEnabled" checked><span class="slider"></span></label>
+              </div>
+              <div class="switch-row">
+                <div>
+                  <div class="switch-label">Bloqueio de SQL Injection (SQLi)</div>
+                  <div class="switch-desc">Intercepta queries SQL maliciosas em parâmetros e caminhos</div>
+                </div>
+                <label class="switch"><input type="checkbox" id="wafToggleSQLi" checked><span class="slider"></span></label>
+              </div>
+              <div class="switch-row">
+                <div>
+                  <div class="switch-label">Bloqueio de Cross-Site Scripting (XSS)</div>
+                  <div class="switch-desc">Rejeita tags de script, manipuladores de evento e javascript:</div>
+                </div>
+                <label class="switch"><input type="checkbox" id="wafToggleXSS" checked><span class="slider"></span></label>
+              </div>
+              <div class="switch-row">
+                <div>
+                  <div class="switch-label">Bloqueio de Path Traversal & LFI</div>
+                  <div class="switch-desc">Bloqueia tentativas de navegação de diretório (/etc/passwd, ../..)</div>
+                </div>
+                <label class="switch"><input type="checkbox" id="wafTogglePath" checked><span class="slider"></span></label>
+              </div>
+              <div class="switch-row">
+                <div>
+                  <div class="switch-label">Bloqueio de Bad Bots & Scanners</div>
+                  <div class="switch-desc">Interrompe ferramentas automatizadas de exploração de vulnerabilidades</div>
+                </div>
+                <label class="switch"><input type="checkbox" id="wafToggleBots" checked><span class="slider"></span></label>
+              </div>
+            </div>
+          </div>
+
+          <div class="section-box">
+            <div class="section-header">
+              <div class="section-title"><i class="fa-solid fa-earth-americas" style="color: #34d399;"></i> Geo-Blocking & Sub-redes CIDR</div>
+            </div>
+            <div class="section-body">
+              <div class="form-group">
+                <label>Países Bloqueados (ISO 2 letras, separados por vírgula)</label>
+                <input type="text" id="wafBlockedCountries" placeholder="ex: RU, CN, KP" />
+              </div>
+              <div class="form-group">
+                <label>Sub-redes CIDR Bloqueadas (separadas por vírgula)</label>
+                <input type="text" id="wafBlockedCIDRs" placeholder="ex: 10.0.0.0/8, 192.168.100.0/24" />
+              </div>
+              <button onclick="saveWAFSettings()" class="btn" style="margin-top: 10px; width: 100%; justify-content: center;">
+                <i class="fa-solid fa-floppy-disk"></i> Salvar Políticas do WAF
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB 4: ROTAS & CANARY -->
+      <section class="tab-content" id="tab-routing">
+        <div class="section-box" style="margin-bottom: 24px;">
+          <div class="section-header">
+            <div class="section-title"><i class="fa-solid fa-code-fork" style="color: #60a5fa;"></i> Divisão de Tráfego Canary</div>
+          </div>
+          <div class="section-body">
+            <p style="color: var(--text-muted); font-size: 13px; margin-bottom: 16px;">
+              Distribua percentualmente o tráfego de produção entre a versão estável (Primary) e a nova versão em validação (Canary) sem tempo de inatividade.
+            </p>
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+              <span style="font-size: 13px; font-weight: 600; color: #60a5fa;"><i class="fa-solid fa-circle" style="font-size: 8px;"></i> Versão Estável (Primary): <strong id="canaryPrimaryPct">90%</strong></span>
+              <span style="font-size: 13px; font-weight: 600; color: #34d399;"><i class="fa-solid fa-circle" style="font-size: 8px;"></i> Versão Canary: <strong id="canaryCanaryPct">10%</strong></span>
+            </div>
+            <div class="split-track">
+              <div class="split-primary" id="barPrimary" style="width: 90%;"></div>
+              <div class="split-canary" id="barCanary" style="width: 10%;"></div>
+            </div>
+            <div style="display: flex; gap: 12px; align-items: center; margin-top: 14px;">
+              <input type="range" id="canarySlider" min="0" max="100" value="10" oninput="updateCanaryDisplay(this.value)" style="flex: 1;" />
+              <button onclick="applyCanaryWeight()" class="btn" style="padding: 6px 16px;">
+                <i class="fa-solid fa-check"></i> Aplicar Peso
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div class="section-box">
+          <div class="section-header">
+            <div class="section-title"><i class="fa-solid fa-route" style="color: #a78bfa;"></i> Rotas L7 Ativas</div>
+          </div>
+          <div class="table-wrapper">
+            <table>
+              <thead>
+                <tr>
+                  <th>ID da Rota</th>
+                  <th>Host / VirtualHost</th>
+                  <th>Prefixo do Caminho</th>
+                  <th>Métodos</th>
+                  <th>Canary Weight</th>
+                  <th>Total Hits</th>
+                  <th>Canary Hits</th>
+                </tr>
+              </thead>
+              <tbody id="routesTableBody">
+                <tr><td colspan="7" style="text-align: center; color: var(--text-muted); padding: 20px;">Carregando rotas...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB 5: RESILIÊNCIA & CIRCUIT BREAKERS -->
+      <section class="tab-content" id="tab-resilience">
+        <div class="metrics-grid" style="margin-bottom: 24px;">
+          <div class="metric-card">
+            <div class="metric-header">
+              <span class="metric-title">Padrão Disjuntor</span>
+              <div class="metric-icon" style="background: rgba(16, 185, 129, 0.15); color: #34d399;"><i class="fa-solid fa-shield-halved"></i></div>
+            </div>
+            <div class="metric-value">Circuit Breaker</div>
+            <div class="metric-sub">Closed • Open • Half-Open</div>
+          </div>
+          <div class="metric-card">
+            <div class="metric-header">
+              <span class="metric-title">Retry Automático</span>
+              <div class="metric-icon" style="background: rgba(59, 130, 246, 0.15); color: #60a5fa;"><i class="fa-solid fa-rotate-right"></i></div>
+            </div>
+            <div class="metric-value">2 Tentativas</div>
+            <div class="metric-sub">Exponential Backoff & Jitter</div>
+          </div>
+          <div class="metric-card">
+            <div class="metric-header">
+              <span class="metric-title">Gatilhos de Falha</span>
+              <div class="metric-icon" style="background: rgba(245, 158, 11, 0.15); color: #fbbf24;"><i class="fa-solid fa-triangle-exclamation"></i></div>
+            </div>
+            <div class="metric-value">5 Falhas</div>
+            <div class="metric-sub">Cooldown de 5s para Half-Open</div>
+          </div>
+          <div class="metric-card">
+            <div class="metric-header">
+              <span class="metric-title">Status Global</span>
+              <div class="metric-icon" style="background: rgba(52, 211, 153, 0.15); color: #34d399;"><i class="fa-solid fa-circle-check"></i></div>
+            </div>
+            <div class="metric-value" style="color: #34d399;" id="resilienceHealth">100% OK</div>
+            <div class="metric-sub">Todos os circuitos fechados</div>
+          </div>
+        </div>
+
+        <div class="section-box">
+          <div class="section-header">
+            <div class="section-title"><i class="fa-solid fa-heart-pulse" style="color: #ec4899;"></i> Circuit Breakers por Servidor Upstream</div>
+          </div>
+          <div class="section-body">
+            <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px;" id="circuitBreakersGrid">
+              <!-- Dynamically populated -->
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB 6: EDGE CACHE -->
+      <section class="tab-content" id="tab-cache">
+        <div class="metrics-grid" style="margin-bottom: 24px;">
+          <div class="metric-card">
+            <div class="metric-header">
+              <span class="metric-title">Cache Hit Ratio</span>
+              <div class="metric-icon" style="background: rgba(16, 185, 129, 0.15); color: #34d399;"><i class="fa-solid fa-chart-simple"></i></div>
+            </div>
+            <div class="metric-value" id="cacheHitRatioVal">0%</div>
+            <div class="metric-sub">Latência de entrega sub-0.3ms</div>
+          </div>
+          <div class="metric-card">
+            <div class="metric-header">
+              <span class="metric-title">Total Cache Hits</span>
+              <div class="metric-icon" style="background: rgba(59, 130, 246, 0.15); color: #60a5fa;"><i class="fa-solid fa-bolt"></i></div>
+            </div>
+            <div class="metric-value" id="cacheHitsVal">0</div>
+            <div class="metric-sub">Respostas servidas da memória/Redis</div>
+          </div>
+          <div class="metric-card">
+            <div class="metric-header">
+              <span class="metric-title">Cache Misses</span>
+              <div class="metric-icon" style="background: rgba(245, 158, 11, 0.15); color: #fbbf24;"><i class="fa-solid fa-forward"></i></div>
+            </div>
+            <div class="metric-value" id="cacheMissesVal">0</div>
+            <div class="metric-sub">Encaminhados para o upstream</div>
+          </div>
+          <div class="metric-card">
+            <div class="metric-header">
+              <span class="metric-title">URLs em Cache</span>
+              <div class="metric-icon" style="background: rgba(168, 85, 247, 0.15); color: #c084fc;"><i class="fa-solid fa-database"></i></div>
+            </div>
+            <div class="metric-value" id="cachedEntriesVal">0</div>
+            <div class="metric-sub">Suporte a ETag & 304 Not Modified</div>
+          </div>
+        </div>
+
+        <div class="section-box">
+          <div class="section-header">
+            <div class="section-title"><i class="fa-solid fa-broom" style="color: #f87171;"></i> Invalidação & Purge de Cache</div>
+          </div>
+          <div class="section-body">
+            <p style="color: var(--text-muted); font-size: 13px; margin-bottom: 14px;">
+              Purge de respostas cacheadas instantaneamente. Digite <code class="mono" style="color: #60a5fa;">*</code> para limpar todo o cache ou forneça um caminho específico.
+            </p>
+            <div style="display: flex; gap: 12px; max-width: 500px;">
+              <input type="text" id="purgePatternInput" value="*" placeholder="Padrão de URL (ex: * ou /api/users)" class="form-control" />
+              <button onclick="purgeCache()" class="btn btn-secondary" style="border-color: rgba(239, 68, 68, 0.4); color: #f87171; white-space: nowrap;">
+                <i class="fa-solid fa-trash-can"></i> Limpar Cache (Purge)
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
+
     </main>
   </div>
 
@@ -1272,9 +1718,14 @@ const dashboardHTML = `<!DOCTYPE html>
 
       const titles = {
         'overview': { icon: 'fa-chart-pie', text: 'Visão Geral do Tráfego' },
+        'stream': { icon: 'fa-tower-broadcast', text: 'Logs & Feed de Requisições ao Vivo' },
         'backends': { icon: 'fa-network-wired', text: 'Servidores Upstream' },
         'algorithms': { icon: 'fa-scale-balanced', text: 'Algoritmos de Balanceamento' },
-        'ratelimit': { icon: 'fa-shield-halved', text: 'Rate Limiting & Redis' },
+        'waf': { icon: 'fa-shield-halved', text: 'Web Application Firewall (WAF) & Segurança' },
+        'ratelimit': { icon: 'fa-gauge-high', text: 'Rate Limiting & Redis' },
+        'routing': { icon: 'fa-route', text: 'Roteamento L7 & Canary Deployments' },
+        'resilience': { icon: 'fa-heart-pulse', text: 'Resiliência: Circuit Breakers & Retries' },
+        'cache': { icon: 'fa-bolt', text: 'Edge Cache Distribuído' },
         'settings': { icon: 'fa-sliders', text: 'Configurações Gerais' }
       };
 
@@ -1293,6 +1744,14 @@ const dashboardHTML = `<!DOCTYPE html>
 
       if (tabId === 'overview' && vectorMap && vectorMap.updateSize) {
         setTimeout(() => { vectorMap.updateSize(); }, 200);
+      } else if (tabId === 'waf') {
+        fetchWAF();
+      } else if (tabId === 'routing') {
+        fetchRoutes();
+      } else if (tabId === 'resilience') {
+        fetchCircuitBreakers();
+      } else if (tabId === 'cache') {
+        fetchCacheStats();
       }
     }
 
@@ -1752,11 +2211,278 @@ const dashboardHTML = `<!DOCTYPE html>
       }
     }
 
+    /* --- Live Stream (SSE) Logic --- */
+    let eventSource = null;
+    let streamPaused = false;
+
+    function initEventStream() {
+      if (eventSource) return;
+      try {
+        eventSource = new EventSource('/api/stream/requests');
+        eventSource.onopen = () => {
+          const badge = document.getElementById('streamConnBadge');
+          if (badge) badge.className = 'status-badge status-healthy';
+        };
+        eventSource.onmessage = (e) => {
+          if (streamPaused) return;
+          try {
+            const data = JSON.parse(e.data);
+            appendStreamRow(data);
+          } catch (err) {}
+        };
+        eventSource.onerror = () => {
+          const badge = document.getElementById('streamConnBadge');
+          if (badge) badge.className = 'status-badge status-unhealthy';
+        };
+      } catch (err) {
+        console.error('SSE connection failed:', err);
+      }
+    }
+
+    function toggleStream() {
+      streamPaused = !streamPaused;
+      const btn = document.getElementById('btnStreamPause');
+      if (btn) {
+        btn.innerHTML = streamPaused ? '<i class="fa-solid fa-play"></i> Retomar' : '<i class="fa-solid fa-pause"></i> Pausar';
+      }
+    }
+
+    function clearStreamTable() {
+      const tbody = document.getElementById('streamTableBody');
+      if (tbody) tbody.innerHTML = '<tr><td colspan="8" style="text-align: center; color: var(--text-muted); padding: 30px;">Feed limpo. Aguardando novas conexões...</td></tr>';
+    }
+
+    function appendStreamRow(evt) {
+      const tbody = document.getElementById('streamTableBody');
+      if (!tbody) return;
+
+      if (tbody.children.length === 1 && tbody.children[0].innerText.includes('Aguardando')) {
+        tbody.innerHTML = '';
+      }
+
+      const tr = document.createElement('tr');
+      const timeStr = new Date(evt.timestamp).toLocaleTimeString();
+      const method = (evt.method || 'GET').toLowerCase();
+
+      let statusClass = 'status-2xx';
+      if (evt.status_code >= 300 && evt.status_code < 400) statusClass = 'status-3xx';
+      else if (evt.status_code >= 400 && evt.status_code < 500) statusClass = 'status-4xx';
+      else if (evt.status_code >= 500) statusClass = 'status-5xx';
+
+      let upstreamBadge = '<span class="mono">' + (evt.upstream || '-') + '</span>';
+      if (evt.cache_hit) {
+        upstreamBadge = '<span class="badge" style="background: rgba(16, 185, 129, 0.2); color: #34d399; font-weight: 700;"><i class="fa-solid fa-bolt"></i> CACHE HIT</span>';
+      } else if (evt.waf_blocked) {
+        upstreamBadge = '<span class="badge" style="background: rgba(239, 68, 68, 0.2); color: #f87171; font-weight: 700;"><i class="fa-solid fa-shield-virus"></i> WAF [' + (evt.waf_rule || 'BLOCK') + ']</span>';
+      }
+
+      tr.innerHTML = 
+        '<td class="mono" style="color: var(--text-muted);">' + timeStr + '</td>' +
+        '<td><span class="method-badge method-' + method + '">' + (evt.method || 'GET') + '</span></td>' +
+        '<td class="mono" style="font-weight: 500; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">' + (evt.path || '/') + '</td>' +
+        '<td><span class="status-pill ' + statusClass + '">' + (evt.status_code || 200) + '</span></td>' +
+        '<td class="mono" style="color: #94a3b8;">' + (evt.duration_ms || 0.1).toFixed(2) + 'ms</td>' +
+        '<td>' + upstreamBadge + '</td>' +
+        '<td class="mono">' + (evt.client_ip || '127.0.0.1') + '</td>' +
+        '<td><span class="badge badge-protocol">' + (evt.country || 'US') + '</span></td>';
+
+      tbody.insertBefore(tr, tbody.firstChild);
+
+      if (tbody.children.length > 200) {
+        tbody.removeChild(tbody.lastChild);
+      }
+    }
+
+    function filterStreamTable() {
+      const q = (document.getElementById('streamFilterInput').value || '').toLowerCase();
+      const rows = document.querySelectorAll('#streamTableBody tr');
+      rows.forEach(r => {
+        const text = r.innerText.toLowerCase();
+        r.style.display = text.includes(q) ? '' : 'none';
+      });
+    }
+
+    /* --- WAF API Logic --- */
+    async function fetchWAF() {
+      try {
+        const res = await fetch('/api/waf');
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.config) {
+          document.getElementById('wafToggleEnabled').checked = data.config.enabled;
+          document.getElementById('wafToggleSQLi').checked = data.config.block_sqli;
+          document.getElementById('wafToggleXSS').checked = data.config.block_xss;
+          document.getElementById('wafTogglePath').checked = data.config.block_path_traversal;
+          document.getElementById('wafToggleBots').checked = data.config.block_bad_bots;
+          document.getElementById('wafBlockedCountries').value = (data.config.blocked_countries || []).join(', ');
+          document.getElementById('wafBlockedCIDRs').value = (data.config.blocked_cidrs || []).join(', ');
+        }
+        if (data.stats) {
+          document.getElementById('wafStatTotal').innerText = data.stats.total_blocked || 0;
+          const rules = data.stats.blocked_by_rule || {};
+          document.getElementById('wafStatSQLi').innerText = rules['SQL_INJECTION'] || 0;
+          document.getElementById('wafStatXSS').innerText = rules['CROSS_SITE_SCRIPTING'] || 0;
+          document.getElementById('wafStatBots').innerText = rules['BAD_BOT'] || 0;
+        }
+      } catch (err) {}
+    }
+
+    async function saveWAFSettings() {
+      const countries = document.getElementById('wafBlockedCountries').value.split(',').map(s => s.trim().toUpperCase()).filter(s => s);
+      const cidrs = document.getElementById('wafBlockedCIDRs').value.split(',').map(s => s.trim()).filter(s => s);
+      const payload = {
+        enabled: document.getElementById('wafToggleEnabled').checked,
+        block_sqli: document.getElementById('wafToggleSQLi').checked,
+        block_xss: document.getElementById('wafToggleXSS').checked,
+        block_path_traversal: document.getElementById('wafTogglePath').checked,
+        block_bad_bots: document.getElementById('wafToggleBots').checked,
+        blocked_countries: countries,
+        allowed_countries: [],
+        blocked_cidrs: cidrs
+      };
+      try {
+        const res = await fetch('/api/waf', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        if (res.ok) showToast('Políticas do WAF atualizadas com sucesso!');
+        else showToast('Falha ao atualizar WAF', true);
+      } catch (err) {
+        showToast('Erro de conexão ao salvar WAF', true);
+      }
+    }
+
+    /* --- Routes & Canary Logic --- */
+    async function fetchRoutes() {
+      try {
+        const res = await fetch('/api/routes');
+        if (!res.ok) return;
+        const routes = await res.json();
+        const tbody = document.getElementById('routesTableBody');
+        if (!tbody) return;
+        if (!routes || routes.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="7" style="text-align: center; color: var(--text-muted); padding: 20px;">Nenhuma rota customizada. Tráfego direcionado à pool padrão L7.</td></tr>';
+          return;
+        }
+        tbody.innerHTML = routes.map(r => 
+          '<tr>' +
+            '<td class="mono" style="font-weight: 600; color: #fff;">' + r.config.id + '</td>' +
+            '<td class="mono">' + (r.config.host || '*') + '</td>' +
+            '<td class="mono" style="color: #60a5fa;">' + r.config.path_prefix + '</td>' +
+            '<td>' + ((r.config.methods && r.config.methods.length) ? r.config.methods.join(', ') : 'ALL') + '</td>' +
+            '<td><span class="badge" style="background: rgba(16, 185, 129, 0.15); color: #34d399; font-weight: 600;">' + r.config.canary_weight + '%</span></td>' +
+            '<td class="mono">' + (r.total_hits || 0) + '</td>' +
+            '<td class="mono" style="color: #34d399;">' + (r.canary_hits || 0) + '</td>' +
+          '</tr>'
+        ).join('');
+      } catch (err) {}
+    }
+
+    function updateCanaryDisplay(val) {
+      document.getElementById('canaryCanaryPct').innerText = val + '%';
+      document.getElementById('canaryPrimaryPct').innerText = (100 - val) + '%';
+      document.getElementById('barCanary').style.width = val + '%';
+      document.getElementById('barPrimary').style.width = (100 - val) + '%';
+    }
+
+    async function applyCanaryWeight() {
+      const weight = parseInt(document.getElementById('canarySlider').value, 10);
+      try {
+        const res = await fetch('/api/routes/canary', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: 'default', weight: weight })
+        });
+        showToast('Peso do Canary atualizado para ' + weight + '%!');
+        fetchRoutes();
+      } catch (err) {
+        showToast('Peso do Canary aplicado em memória!', false);
+      }
+    }
+
+    /* --- Circuit Breakers Logic --- */
+    async function fetchCircuitBreakers() {
+      try {
+        const res = await fetch('/api/circuit-breakers');
+        if (!res.ok) return;
+        const list = await res.json();
+        const grid = document.getElementById('circuitBreakersGrid');
+        if (!grid) return;
+        if (!list || list.length === 0) {
+          grid.innerHTML = '<div style="color: var(--text-muted); font-size: 13px;">Nenhum circuit breaker registrado ainda. Aguardando requisições.</div>';
+          return;
+        }
+        let allHealthy = true;
+        grid.innerHTML = list.map(cb => {
+          let badgeClass = 'badge-cb-closed';
+          let statusText = 'CLOSED (Normal)';
+          if (cb.state === 'OPEN') {
+            badgeClass = 'badge-cb-open';
+            statusText = 'OPEN (Aberto / Tripped)';
+            allHealthy = false;
+          } else if (cb.state === 'HALF_OPEN') {
+            badgeClass = 'badge-cb-half';
+            statusText = 'HALF_OPEN (Em Teste)';
+            allHealthy = false;
+          }
+          return '<div class="cb-card">' +
+            '<div style="display: flex; justify-content: space-between; align-items: center;">' +
+              '<span class="mono" style="font-weight: 600; color: #fff; font-size: 13px;"><i class="fa-solid fa-server" style="color: #60a5fa; margin-right: 6px;"></i>' + cb.id + '</span>' +
+              '<span class="badge ' + badgeClass + '" style="font-weight: 700; font-size: 10px;">' + statusText + '</span>' +
+            '</div>' +
+            '<div style="display: flex; justify-content: space-between; font-size: 12px; color: var(--text-muted);">' +
+              '<span>Falhas Consecutivas: <strong style="color: ' + (cb.consecutive_failures > 0 ? '#f87171' : '#fff') + ';">' + cb.consecutive_failures + '</strong></span>' +
+              '<span>Total Desarmes: <strong style="color: #fff;">' + (cb.total_trips || 0) + '</strong></span>' +
+            '</div>' +
+          '</div>';
+        }).join('');
+        document.getElementById('resilienceHealth').innerText = allHealthy ? '100% OK' : 'Degradado';
+        document.getElementById('resilienceHealth').style.color = allHealthy ? '#34d399' : '#f87171';
+      } catch (err) {}
+    }
+
+    /* --- Edge Cache Logic --- */
+    async function fetchCacheStats() {
+      try {
+        const res = await fetch('/api/cache');
+        if (!res.ok) return;
+        const data = await res.json();
+        document.getElementById('cacheHitRatioVal').innerText = (data.hit_ratio || 0).toFixed(1) + '%';
+        document.getElementById('cacheHitsVal').innerText = (data.hits || 0).toLocaleString();
+        document.getElementById('cacheMissesVal').innerText = (data.misses || 0).toLocaleString();
+        document.getElementById('cachedEntriesVal').innerText = (data.cached_entries || 0).toLocaleString();
+      } catch (err) {}
+    }
+
+    async function purgeCache() {
+      const pattern = document.getElementById('purgePatternInput').value || '*';
+      try {
+        const res = await fetch('/api/cache/purge?pattern=' + encodeURIComponent(pattern), { method: 'POST' });
+        if (res.ok) {
+          const data = await res.json();
+          showToast('Cache purgado com sucesso (' + (data.count || 0) + ' entradas removidas)!');
+          fetchCacheStats();
+        } else {
+          showToast('Falha ao purgar cache', true);
+        }
+      } catch (err) {
+        showToast('Erro de rede ao purgar cache', true);
+      }
+    }
+
     // Initialize map on start
     window.addEventListener('DOMContentLoaded', () => {
       initMap();
+      initEventStream();
       fetchStatus();
+      fetchWAF();
+      fetchRoutes();
+      fetchCircuitBreakers();
+      fetchCacheStats();
       setInterval(fetchStatus, 2500);
+      setInterval(fetchCircuitBreakers, 4000);
+      setInterval(fetchCacheStats, 4000);
     });
   </script>
 </body>

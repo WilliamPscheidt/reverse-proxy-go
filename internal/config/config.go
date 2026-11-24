@@ -18,6 +18,10 @@ type Config struct {
 	HealthCheck HealthCheckConfig `yaml:"health_check"`
 	RateLimit   RateLimitConfig   `yaml:"rate_limit"`
 	Timeouts    TimeoutsConfig    `yaml:"timeouts"`
+	WAF         WAFConfig         `yaml:"waf"`
+	Cache       CacheConfig       `yaml:"cache"`
+	Resilience  ResilienceConfig  `yaml:"resilience"`
+	Routes      []RouteConfig     `yaml:"routes"`
 }
 
 // AdminConfig holds web administration dashboard settings.
@@ -96,6 +100,56 @@ type TimeoutsConfig struct {
 	MaxIdleConnsHost  int           `yaml:"max_idle_conns_per_host"`
 }
 
+// WAFConfig holds rules and toggles for Web Application Firewall inspection.
+type WAFConfig struct {
+	Enabled            bool     `yaml:"enabled"`
+	BlockSQLi          bool     `yaml:"block_sqli"`
+	BlockXSS           bool     `yaml:"block_xss"`
+	BlockPathTraversal bool     `yaml:"block_path_traversal"`
+	BlockBadBots       bool     `yaml:"block_bad_bots"`
+	BlockedCountries   []string `yaml:"blocked_countries"`
+	AllowedCountries   []string `yaml:"allowed_countries"`
+	BlockedCIDRs       []string `yaml:"blocked_cidrs"`
+}
+
+// CacheConfig holds edge caching configuration.
+type CacheConfig struct {
+	Enabled    bool          `yaml:"enabled"`
+	DefaultTTL time.Duration `yaml:"default_ttl"`
+	MaxEntries int           `yaml:"max_entries"`
+}
+
+// CircuitBreakerConfig defines threshold rules for circuit breaking.
+type CircuitBreakerConfig struct {
+	FailureThreshold int           `yaml:"failure_threshold"`
+	SuccessThreshold int           `yaml:"success_threshold"`
+	Cooldown         time.Duration `yaml:"cooldown"`
+}
+
+// RetryConfig specifies retry behavior on upstream failures.
+type RetryConfig struct {
+	Enabled        bool          `yaml:"enabled"`
+	MaxRetries     int           `yaml:"max_retries"`
+	InitialBackoff time.Duration `yaml:"initial_backoff"`
+	MaxBackoff     time.Duration `yaml:"max_backoff"`
+}
+
+// ResilienceConfig bundles circuit breaking and retry policies.
+type ResilienceConfig struct {
+	CircuitBreaker CircuitBreakerConfig `yaml:"circuit_breaker"`
+	Retry          RetryConfig          `yaml:"retry"`
+}
+
+// RouteConfig defines L7 routing and canary splitting.
+type RouteConfig struct {
+	ID           string   `yaml:"id"`
+	Host         string   `yaml:"host"`
+	PathPrefix   string   `yaml:"path_prefix"`
+	Methods      []string `yaml:"methods"`
+	CanaryWeight int      `yaml:"canary_weight"`
+	StripPrefix  bool     `yaml:"strip_prefix"`
+}
+
 // DefaultConfig returns safe, high-performance defaults.
 func DefaultConfig() *Config {
 	return &Config{
@@ -159,6 +213,35 @@ func DefaultConfig() *Config {
 			MaxIdleConns:     10000,
 			MaxIdleConnsHost: 2000,
 		},
+		WAF: WAFConfig{
+			Enabled:            true,
+			BlockSQLi:          true,
+			BlockXSS:           true,
+			BlockPathTraversal: true,
+			BlockBadBots:       true,
+			BlockedCountries:   []string{},
+			AllowedCountries:   []string{},
+			BlockedCIDRs:       []string{},
+		},
+		Cache: CacheConfig{
+			Enabled:    true,
+			DefaultTTL: 60 * time.Second,
+			MaxEntries: 10000,
+		},
+		Resilience: ResilienceConfig{
+			CircuitBreaker: CircuitBreakerConfig{
+				FailureThreshold: 5,
+				SuccessThreshold: 2,
+				Cooldown:         5 * time.Second,
+			},
+			Retry: RetryConfig{
+				Enabled:        true,
+				MaxRetries:     2,
+				InitialBackoff: 25 * time.Millisecond,
+				MaxBackoff:     150 * time.Millisecond,
+			},
+		},
+		Routes: []RouteConfig{},
 	}
 }
 

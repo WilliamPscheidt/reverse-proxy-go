@@ -14,12 +14,16 @@ import (
 	"github.com/WilliamPscheidt/reverse-proxy-go/internal/admin"
 	"github.com/WilliamPscheidt/reverse-proxy-go/internal/analytics"
 	"github.com/WilliamPscheidt/reverse-proxy-go/internal/balancer"
+	"github.com/WilliamPscheidt/reverse-proxy-go/internal/cache"
 	"github.com/WilliamPscheidt/reverse-proxy-go/internal/config"
 	"github.com/WilliamPscheidt/reverse-proxy-go/internal/health"
 	"github.com/WilliamPscheidt/reverse-proxy-go/internal/metrics"
 	"github.com/WilliamPscheidt/reverse-proxy-go/internal/proxy"
 	"github.com/WilliamPscheidt/reverse-proxy-go/internal/ratelimit"
+	"github.com/WilliamPscheidt/reverse-proxy-go/internal/resilience"
+	"github.com/WilliamPscheidt/reverse-proxy-go/internal/routing"
 	"github.com/WilliamPscheidt/reverse-proxy-go/internal/security"
+	"github.com/WilliamPscheidt/reverse-proxy-go/internal/stream"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -169,7 +173,7 @@ func main() {
 			cfg.HealthCheck.Interval, cfg.HealthCheck.Timeout)
 	}
 
-	// 7. Setup Security Blacklist, Analytics & Web Administration Dashboard
+	// 7. Setup Security WAF, Blacklist, Cache, Resilience, Router & Live Stream
 	var adminServer *admin.Server
 	var redisClient *redis.Client
 	if cfg.RateLimit.Strategy == "redis" && cfg.RateLimit.Redis.Addr != "" {
@@ -182,9 +186,73 @@ func main() {
 	analyticsCollector := analytics.NewAnalytics()
 	analyticsCollector.SetBlacklistChecker(blacklist.IsBlocked)
 
+	// WAF (Web Application Firewall)
+	wafCfg := security.WAFConfig{
+		Enabled:            cfg.WAF.Enabled,
+		BlockSQLi:          cfg.WAF.BlockSQLi,
+		BlockXSS:           cfg.WAF.BlockXSS,
+		BlockPathTraversal: cfg.WAF.BlockPathTraversal,
+		BlockBadBots:       cfg.WAF.BlockBadBots,
+		BlockedCountries:   cfg.WAF.BlockedCountries,
+		AllowedCountries:   cfg.WAF.AllowedCountries,
+		BlockedCIDRs:       cfg.WAF.BlockedCIDRs,
+	}
+	wafEngine := security.NewWAF(wafCfg)
+
+	// Edge Response Cache
+	cacheCfg := cache.CacheConfig{
+		Enabled:    cfg.Cache.Enabled,
+		DefaultTTL: cfg.Cache.DefaultTTL,
+		MaxEntries: cfg.Cache.MaxEntries,
+	}
+	cacheEngine := cache.NewCache(cacheCfg, redisClient)
+
+	// Live Request Log Stream Broker
+	streamBroker := stream.NewStreamBroker(200)
+
+	// Circuit Breakers & Retries
+	circuitRegistry := resilience.NewCircuitRegistry(resilience.CircuitConfig{
+		FailureThreshold: cfg.Resilience.CircuitBreaker.FailureThreshold,
+		SuccessThreshold: cfg.Resilience.CircuitBreaker.SuccessThreshold,
+		Cooldown:         cfg.Resilience.CircuitBreaker.Cooldown,
+	})
+	retryPolicy := resilience.NewRetryPolicy(resilience.RetryConfig{
+		Enabled:        cfg.Resilience.Retry.Enabled,
+		MaxRetries:     cfg.Resilience.Retry.MaxRetries,
+		InitialBackoff: cfg.Resilience.Retry.InitialBackoff,
+		MaxBackoff:     cfg.Resilience.Retry.MaxBackoff,
+	})
+
+	// L7 Router & Canary Traffic Splitting
+	routerEngine := routing.NewRouter(l7Pool)
+	if len(cfg.Routes) > 0 {
+		for _, r := range cfg.Routes {
+			routerEngine.AddRoute(routing.RouteConfig{
+				ID:           r.ID,
+				Host:         r.Host,
+				PathPrefix:   r.PathPrefix,
+				Methods:      r.Methods,
+				CanaryWeight: r.CanaryWeight,
+				StripPrefix:  r.StripPrefix,
+			}, l7Pool, l7Pool)
+		}
+	} else if l7Pool != nil {
+		routerEngine.AddRoute(routing.RouteConfig{
+			ID:           "default",
+			Host:         "*",
+			PathPrefix:   "/",
+			CanaryWeight: 10,
+		}, l7Pool, l7Pool)
+	}
+
 	if l7Server != nil {
 		l7Server.SetBlacklist(blacklist)
 		l7Server.SetAnalytics(analyticsCollector)
+		l7Server.SetWAF(wafEngine)
+		l7Server.SetCache(cacheEngine)
+		l7Server.SetRouter(routerEngine)
+		l7Server.SetResilience(circuitRegistry, retryPolicy)
+		l7Server.SetStreamBroker(streamBroker)
 	}
 	if l4Server != nil {
 		l4Server.SetBlacklist(blacklist)
@@ -192,6 +260,12 @@ func main() {
 
 	if cfg.Admin.Enabled {
 		adminServer = admin.NewServer(cfg, l7Server, l4Server, rateLimiter, m, analyticsCollector, blacklist)
+		adminServer.SetWAF(wafEngine)
+		adminServer.SetCache(cacheEngine)
+		adminServer.SetRouter(routerEngine)
+		adminServer.SetCircuitRegistry(circuitRegistry)
+		adminServer.SetStreamBroker(streamBroker)
+
 		go func() {
 			if err := adminServer.Start(); err != nil && err != http.ErrServerClosed {
 				log.Printf("[Admin] Server error: %v", err)
