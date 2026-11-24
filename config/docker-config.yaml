@@ -44,9 +44,16 @@ health_check:
 
 rate_limit:
   enabled: true
+  strategy: "redis" # "redis" or "memory"
   rate: 150000
   burst: 200000
   cleanup_interval: 1m
+  redis:
+    addr: "redis:6379"
+    password: ""
+    db: 0
+    timeout: 150ms
+    pool_size: 100
 
 timeouts:
   read_timeout: 30s

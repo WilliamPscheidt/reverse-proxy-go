@@ -28,7 +28,7 @@ type L4Server struct {
 	timeouts    config.TimeoutsConfig
 	pool        *BackendPool
 	balancer    BalancerTCPInterface
-	rateLimiter *ratelimit.ShardedTokenBucket
+	rateLimiter ratelimit.Limiter
 	metrics     *metrics.Metrics
 	bufferPool  *BufferPool
 	listener    net.Listener
@@ -42,7 +42,7 @@ func NewL4Server(
 	timeouts config.TimeoutsConfig,
 	pool *BackendPool,
 	bal BalancerTCPInterface,
-	rl *ratelimit.ShardedTokenBucket,
+	rl ratelimit.Limiter,
 	m *metrics.Metrics,
 ) *L4Server {
 	return &L4Server{

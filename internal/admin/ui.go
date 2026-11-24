@@ -539,7 +539,7 @@ const dashboardHTML = `<!DOCTYPE html>
           <i class="fa-solid fa-shield-halved stat-icon"></i>
         </div>
         <div class="stat-value" id="rateLimitVal" style="font-size: 20px; color: #34d399;">--</div>
-        <div class="stat-sub">Sharded Token Bucket</div>
+        <div class="stat-sub" id="rateLimitStrategy">Carregando...</div>
       </div>
     </div>
 
@@ -670,23 +670,23 @@ const dashboardHTML = `<!DOCTYPE html>
           <div class="config-box">
             <div class="config-box-title">
               <i class="fa-solid fa-shield-halved" style="color: #3b82f6;"></i>
-              Parâmetros de Rede e HTTP
+              Rate Limiting & Conexões
             </div>
             <div class="config-row">
-              <span>Cabeçalhos RFC</span>
-              <span class="config-val">X-Forwarded-For, X-Real-IP</span>
+              <span>Estratégia de Limite</span>
+              <span class="config-val" id="rlStrategy">--</span>
             </div>
             <div class="config-row">
-              <span>Keep-Alive / Idle Conns</span>
-              <span class="config-val">Max: 10.000 (Host: 2.500)</span>
+              <span>Status do Redis</span>
+              <span class="config-val" id="redisStatus">--</span>
+            </div>
+            <div class="config-row">
+              <span>Capacidade Burst</span>
+              <span class="config-val" id="rlBurst">--</span>
             </div>
             <div class="config-row">
               <span>Buffer Pooling L4</span>
               <span class="config-val">32 KB (sync.Pool)</span>
-            </div>
-            <div class="config-row">
-              <span>Dreno de nós</span>
-              <span class="config-val">Failover automático ativo</span>
             </div>
           </div>
         </div>
@@ -744,6 +744,23 @@ const dashboardHTML = `<!DOCTYPE html>
           document.getElementById('rateLimitVal').innerText = data.rate_limit.enabled 
             ? (data.rate_limit.rate.toLocaleString() + ' req/s') 
             : 'Desativado';
+
+          let stratText = data.rate_limit.strategy ? data.rate_limit.strategy.toUpperCase() : 'MEMORY';
+          if (data.rate_limit.strategy && data.rate_limit.strategy.includes('redis')) {
+            if (data.rate_limit.healthy) {
+              stratText = 'Redis (' + (data.rate_limit.redis_addr || 'Conectado') + ')';
+              document.getElementById('redisStatus').innerHTML = '<span style="color: var(--green);"><i class="fa-solid fa-circle" style="font-size: 6px;"></i> Conectado</span>';
+            } else {
+              stratText = 'Redis [Fallback Local]';
+              document.getElementById('redisStatus').innerHTML = '<span style="color: var(--yellow);"><i class="fa-solid fa-circle-exclamation" style="font-size: 9px;"></i> Offline (Fallback Ativo)</span>';
+            }
+          } else {
+            document.getElementById('redisStatus').innerText = 'N/A (Modo In-Memory)';
+          }
+
+          document.getElementById('rateLimitStrategy').innerText = stratText;
+          document.getElementById('rlStrategy').innerText = stratText;
+          document.getElementById('rlBurst').innerText = (data.rate_limit.burst || 0).toLocaleString() + ' tokens';
         }
 
         if (data.health_check) {

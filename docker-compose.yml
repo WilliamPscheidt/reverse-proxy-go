@@ -54,6 +54,16 @@ services:
       - backend-1
       - backend-2
       - backend-3
+      - redis
+    networks:
+      - proxy-net
+
+  # Distributed Redis for Global per-IP Rate Limiting
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    command: ["redis-server", "--appendonly", "no", "--save", ""]
     networks:
       - proxy-net
 

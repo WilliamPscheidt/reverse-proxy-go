@@ -70,9 +70,10 @@ flowchart TD
 - Desativação automática de nós que atingem o limite configurado de falhas consecutivas (`unhealthy_threshold`).
 - Restauração automática de nós ao atingirem o limite de sucessos (`healthy_threshold`).
 
-### 3. Rate Limiting In-Memory
-- Implementação de **Token Bucket** fragmentado em 256 shards independentes para mitigar contenção de mutexes em multiprocessamento.
-- Rotina interna periódica (*janitor*) para reciclagem de memória de IPs inativos.
+### 3. Rate Limiting por IP (Redis Distribuído & In-Memory Fallback)
+- **Rate Limiting Distribuído com Redis**: Implementação com script Lua atômico garantindo que múltiplos proxies coordenem o mesmo limite de requisições por IP em tempo real sem race conditions.
+- **Prevenção de Abuso e Spam por IP**: Usuários maliciosos ou clientes com excesso de requisições são bloqueados com HTTP `429 Too Many Requests` antes de sobrecarregar os servidores upstream.
+- **Alta Disponibilidade e Fallback**: Caso o servidor Redis fique indisponível, o sistema ativa automaticamente o fallback local com **Token Bucket em memória particionado (256 shards)**, mantendo a proteção ativa sem interromper o serviço.
 
 ### 4. Métricas em Formato Prometheus
 Endpoint `/metrics` na porta `:2112` expondo:

@@ -30,7 +30,7 @@ type L7Server struct {
 	config      config.L7Config
 	pool        *BackendPool
 	balancer    BalancerInterface
-	rateLimiter *ratelimit.ShardedTokenBucket
+	rateLimiter ratelimit.Limiter
 	metrics     *metrics.Metrics
 	transport   *http.Transport
 	httpServer  *http.Server
@@ -42,7 +42,7 @@ func NewL7Server(
 	timeouts config.TimeoutsConfig,
 	pool *BackendPool,
 	bal BalancerInterface,
-	rl *ratelimit.ShardedTokenBucket,
+	rl ratelimit.Limiter,
 	m *metrics.Metrics,
 ) *L7Server {
 	// High performance HTTP transport optimized for tens of thousands of requests per second

@@ -73,11 +73,12 @@ func main() {
 		}()
 	}
 
-	// 3. Setup Sharded Token Bucket Rate Limiter
-	var rateLimiter *ratelimit.ShardedTokenBucket
+	// 3. Setup Distributed/In-Memory Rate Limiter
+	var rateLimiter ratelimit.Limiter
 	if cfg.RateLimit.Enabled {
-		rateLimiter = ratelimit.NewShardedTokenBucket(cfg.RateLimit)
-		log.Printf("[RateLimit] Enabled: %.0f tokens/s (burst: %d) per client IP", cfg.RateLimit.Rate, cfg.RateLimit.Burst)
+		rateLimiter = ratelimit.New(cfg.RateLimit)
+		log.Printf("[RateLimit] Enabled (%s): %.0f tokens/s (burst: %d) per client IP",
+			rateLimiter.Strategy(), cfg.RateLimit.Rate, cfg.RateLimit.Burst)
 	}
 
 	var healthPools []*proxy.BackendPool

@@ -146,6 +146,16 @@ func (tb *ShardedTokenBucket) purgeStale(now time.Time) {
 	}
 }
 
+// Strategy returns the rate limiter implementation type.
+func (tb *ShardedTokenBucket) Strategy() string {
+	return "memory"
+}
+
+// IsHealthy returns true for in-memory limiters.
+func (tb *ShardedTokenBucket) IsHealthy() bool {
+	return true
+}
+
 // Close gracefully stops the cleanup routine.
 func (tb *ShardedTokenBucket) Close() {
 	if tb.cancelFunc != nil {

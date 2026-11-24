@@ -67,12 +67,23 @@ type HealthCheckConfig struct {
 	HealthyThreshold   int           `yaml:"healthy_threshold"`    // consecutive successes before healthy
 }
 
+// RedisConfig holds connection options for distributed Redis rate limiting.
+type RedisConfig struct {
+	Addr     string        `yaml:"addr"`      // e.g., "127.0.0.1:6379"
+	Password string        `yaml:"password"`  // optional
+	DB       int           `yaml:"db"`        // default 0
+	Timeout  time.Duration `yaml:"timeout"`   // e.g., 200ms
+	PoolSize int           `yaml:"pool_size"` // e.g., 100
+}
+
 // RateLimitConfig holds token bucket rate limiter configuration.
 type RateLimitConfig struct {
 	Enabled         bool          `yaml:"enabled"`
+	Strategy        string        `yaml:"strategy"`         // "redis" or "memory"
 	Rate            float64       `yaml:"rate"`             // tokens replenished per second per client
 	Burst           int           `yaml:"burst"`            // max token capacity per client
 	CleanupInterval time.Duration `yaml:"cleanup_interval"` // interval to purge stale client buckets
+	Redis           RedisConfig   `yaml:"redis"`
 }
 
 // TimeoutsConfig specifies network and connection timeouts.
@@ -128,9 +139,17 @@ func DefaultConfig() *Config {
 		},
 		RateLimit: RateLimitConfig{
 			Enabled:         true,
+			Strategy:        "redis",
 			Rate:            100000, // 100k req/s for ultra-high concurrency tests
 			Burst:           200000,
 			CleanupInterval: 1 * time.Minute,
+			Redis: RedisConfig{
+				Addr:     "127.0.0.1:6379",
+				Password: "",
+				DB:       0,
+				Timeout:  150 * time.Millisecond,
+				PoolSize: 100,
+			},
 		},
 		Timeouts: TimeoutsConfig{
 			ReadTimeout:      30 * time.Second,

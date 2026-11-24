@@ -48,12 +48,19 @@ health_check:
   unhealthy_threshold: 3   # Consecutive failures before removing backend
   healthy_threshold: 2     # Consecutive successes before restoring backend
 
-# Sharded Token Bucket In-Memory Rate Limiter
+# Distributed per-IP Rate Limiting (Redis Token Bucket with In-Memory fallback)
 rate_limit:
   enabled: true
-  rate: 150000             # Tokens replenished per second per client IP
-  burst: 200000            # Maximum burst token capacity
-  cleanup_interval: 1m     # Frequency to purge inactive client bucket memory
+  strategy: "redis"            # "redis" (distributed) or "memory" (local sharded)
+  rate: 150000                 # Tokens replenished per second per client IP
+  burst: 200000                # Maximum burst token capacity
+  cleanup_interval: 1m         # Frequency to purge inactive local fallback memory
+  redis:
+    addr: "127.0.0.1:6379"
+    password: ""
+    db: 0
+    timeout: 150ms
+    pool_size: 100
 
 # Network and Connection Timeouts
 timeouts:

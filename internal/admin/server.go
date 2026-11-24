@@ -21,7 +21,7 @@ type Server struct {
 	cfg         *config.Config
 	l7Server    *proxy.L7Server
 	l4Server    *proxy.L4Server
-	rateLimiter *ratelimit.ShardedTokenBucket
+	rateLimiter ratelimit.Limiter
 	metrics     *metrics.Metrics
 	httpServer  *http.Server
 	startTime   time.Time
@@ -32,7 +32,7 @@ func NewServer(
 	cfg *config.Config,
 	l7 *proxy.L7Server,
 	l4 *proxy.L4Server,
-	rl *ratelimit.ShardedTokenBucket,
+	rl ratelimit.Limiter,
 	m *metrics.Metrics,
 ) *Server {
 	s := &Server{
@@ -87,9 +87,12 @@ type StatusResponse struct {
 }
 
 type RateLimitInfo struct {
-	Enabled bool    `json:"enabled"`
-	Rate    float64 `json:"rate"`
-	Burst   int     `json:"burst"`
+	Enabled   bool    `json:"enabled"`
+	Strategy  string  `json:"strategy"`
+	Healthy   bool    `json:"healthy"`
+	Rate      float64 `json:"rate"`
+	Burst     int     `json:"burst"`
+	RedisAddr string  `json:"redis_addr,omitempty"`
 }
 
 type LayerStatus struct {
@@ -121,14 +124,24 @@ func (s *Server) handleAPIStatus(w http.ResponseWriter, r *http.Request) {
 
 	uptime := time.Since(s.startTime).Truncate(time.Second).String()
 
+	strategy := "memory"
+	healthy := true
+	if s.rateLimiter != nil {
+		strategy = s.rateLimiter.Strategy()
+		healthy = s.rateLimiter.IsHealthy()
+	}
+
 	resp := StatusResponse{
 		Uptime:      uptime,
 		Mode:        s.cfg.Mode,
 		HealthCheck: s.cfg.HealthCheck,
 		RateLimit: RateLimitInfo{
-			Enabled: s.cfg.RateLimit.Enabled,
-			Rate:    s.cfg.RateLimit.Rate,
-			Burst:   s.cfg.RateLimit.Burst,
+			Enabled:   s.cfg.RateLimit.Enabled,
+			Strategy:  strategy,
+			Healthy:   healthy,
+			Rate:      s.cfg.RateLimit.Rate,
+			Burst:     s.cfg.RateLimit.Burst,
+			RedisAddr: s.cfg.RateLimit.Redis.Addr,
 		},
 	}
 
