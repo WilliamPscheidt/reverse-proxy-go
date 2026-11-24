@@ -267,6 +267,24 @@ func (s *Server) handleAPIBackends(w http.ResponseWriter, r *http.Request) {
 					Successes:     b.ConsecutiveSuccesses.Load(),
 				})
 			}
+			if s.l7Server.GetCanaryPool() != nil {
+				for _, b := range s.l7Server.GetCanaryPool().GetBackends() {
+					target := b.Addr
+					if b.URL != nil {
+						target = b.URL.String()
+					}
+					list = append(list, BackendInfo{
+						Type:          "l7 (canary)",
+						Target:        target,
+						Weight:        b.Weight,
+						Alive:         b.IsAlive(),
+						ActiveConns:   b.GetActiveConns(),
+						TotalRequests: b.TotalRequests.Load(),
+						Failures:      b.ConsecutiveFailures.Load(),
+						Successes:     b.ConsecutiveSuccesses.Load(),
+					})
+				}
+			}
 		}
 
 		if s.l4Server != nil {

@@ -98,7 +98,15 @@ func (c *Cache) startCleaner(interval time.Duration) {
 
 // CacheKey generates a normalized cache key from the request.
 func (c *Cache) CacheKey(r *http.Request) string {
-	return r.Method + ":" + r.Host + ":" + r.URL.RequestURI()
+	key := r.Method + ":" + r.Host + ":" + r.URL.RequestURI()
+	if ae := r.Header.Get("Accept-Encoding"); ae != "" {
+		if strings.Contains(ae, "gzip") {
+			key += ":gzip"
+		} else if strings.Contains(ae, "br") {
+			key += ":br"
+		}
+	}
+	return key
 }
 
 // IsCacheableRequest checks if the incoming request method and headers allow caching.
@@ -110,7 +118,7 @@ func (c *Cache) IsCacheableRequest(r *http.Request) bool {
 		return false
 	}
 	cc := r.Header.Get("Cache-Control")
-	if strings.Contains(cc, "no-store") {
+	if strings.Contains(cc, "no-store") || strings.Contains(cc, "no-cache") {
 		return false
 	}
 	return true
@@ -176,6 +184,11 @@ func (c *Cache) Put(r *http.Request, statusCode int, headers http.Header, body [
 		return
 	}
 
+	// RFC 7234: If request had Authorization, do not cache unless Cache-Control: public
+	if r.Header.Get("Authorization") != "" && !strings.Contains(resCC, "public") {
+		return
+	}
+
 	ttl := c.cfg.DefaultTTL
 	if strings.Contains(resCC, "max-age=") {
 		parts := strings.Split(resCC, ",")
@@ -194,10 +207,24 @@ func (c *Cache) Put(r *http.Request, statusCode int, headers http.Header, body [
 	h := sha256.Sum256(body)
 	etag := `W/"` + hex.EncodeToString(h[:8]) + `"`
 
+	// Strip hop-by-hop and sensitive headers (Set-Cookie, Authorization, etc.)
+	// Never leak session cookies or credentials between users!
+	sensitiveHeaders := map[string]bool{
+		"set-cookie":          true,
+		"set-cookie2":         true,
+		"authorization":       true,
+		"www-authenticate":    true,
+		"proxy-authenticate":  true,
+		"proxy-authorization": true,
+		"connection":          true,
+		"transfer-encoding":   true,
+		"keep-alive":          true,
+		"upgrade":             true,
+	}
+
 	headerMap := make(map[string][]string, len(headers))
 	for k, v := range headers {
-		// Don't copy hop-by-hop headers
-		if strings.EqualFold(k, "Connection") || strings.EqualFold(k, "Transfer-Encoding") {
+		if sensitiveHeaders[strings.ToLower(k)] {
 			continue
 		}
 		headerMap[k] = v

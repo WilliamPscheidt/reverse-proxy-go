@@ -20,6 +20,9 @@ l7:
       weight: 1
     - url: "http://127.0.0.1:8083"
       weight: 1
+  canary_backends:
+    - url: "http://127.0.0.1:8084"
+      weight: 1
 
 # L4 TCP Load Balancer Configuration
 l4:

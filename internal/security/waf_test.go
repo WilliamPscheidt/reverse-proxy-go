@@ -1,8 +1,10 @@
 package security
 
 import (
+	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"testing"
 )
 
@@ -131,5 +133,45 @@ func TestWAF_CIDRBlocking(t *testing.T) {
 	blocked, _, _ = waf.Inspect(req, "172.16.0.5", "US")
 	if blocked {
 		t.Fatal("Expected 172.16.0.5 to be allowed")
+	}
+}
+
+func TestWAF_RequestBodyInspection(t *testing.T) {
+	waf := NewWAF(DefaultWAFConfig())
+
+	// 1. POST JSON with SQL Injection
+	sqlBody := `{"username": "admin' OR 1=1--", "password": "secret"}`
+	req1, _ := http.NewRequest("POST", "http://example.com/api/login", strings.NewReader(sqlBody))
+	req1.Header.Set("Content-Type", "application/json")
+
+	blocked, rule, _ := waf.Inspect(req1, "1.2.3.4", "BR")
+	if !blocked || rule != RuleSQLi {
+		t.Fatalf("Expected SQLi block in POST body, got blocked=%v, rule=%s", blocked, rule)
+	}
+
+	// 2. POST JSON with XSS
+	xssBody := `{"comment": "hello <script>alert('pwned')</script>"}`
+	req2, _ := http.NewRequest("POST", "http://example.com/api/comments", strings.NewReader(xssBody))
+	req2.Header.Set("Content-Type", "application/json")
+
+	blocked, rule, _ = waf.Inspect(req2, "1.2.3.4", "BR")
+	if !blocked || rule != RuleXSS {
+		t.Fatalf("Expected XSS block in POST body, got blocked=%v, rule=%s", blocked, rule)
+	}
+
+	// 3. Clean POST body should NOT be blocked and body MUST remain readable for upstream
+	cleanBody := `{"name": "John Doe", "email": "john@example.com"}`
+	req3, _ := http.NewRequest("POST", "http://example.com/api/users", strings.NewReader(cleanBody))
+	req3.Header.Set("Content-Type", "application/json")
+
+	blocked, _, _ = waf.Inspect(req3, "1.2.3.4", "BR")
+	if blocked {
+		t.Fatal("Expected clean POST body to be permitted")
+	}
+
+	// Verify request body can still be read completely by upstream
+	upstreamRead, err := io.ReadAll(req3.Body)
+	if err != nil || string(upstreamRead) != cleanBody {
+		t.Fatalf("Expected upstream body to be %s, got %s (err: %v)", cleanBody, upstreamRead, err)
 	}
 }

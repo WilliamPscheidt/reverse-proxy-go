@@ -93,6 +93,7 @@ func main() {
 	// 4. Setup L7 HTTP Reverse Proxy
 	var l7Server *proxy.L7Server
 	var l7Pool *proxy.BackendPool
+	var canaryPool *proxy.BackendPool
 
 	if (cfg.Mode == "l7" || cfg.Mode == "both") && cfg.L7.Enabled {
 		l7Pool = proxy.NewBackendPool()
@@ -115,6 +116,23 @@ func main() {
 
 		l7Server = proxy.NewL7Server(cfg.L7, cfg.Timeouts, l7Pool, bal, rateLimiter, m)
 		healthPools = append(healthPools, l7Pool)
+
+		if len(cfg.L7.CanaryBackends) > 0 {
+			canaryPool = proxy.NewBackendPool()
+			for _, b := range cfg.L7.CanaryBackends {
+				u := proxy.ParseURL(b.URL)
+				if u != nil {
+					backend := proxy.NewBackend(u, u.Host, b.Weight)
+					canaryPool.AddBackend(backend)
+					if m != nil {
+						m.SetBackendHealth(u.Host, true)
+					}
+				}
+			}
+			l7Server.SetCanaryPool(canaryPool)
+			healthPools = append(healthPools, canaryPool)
+			log.Printf("[L7] Configured %d dedicated Canary upstream backend(s)", len(cfg.L7.CanaryBackends))
+		}
 
 		go func() {
 			if err := l7Server.Start(); err != nil {
@@ -224,6 +242,10 @@ func main() {
 	})
 
 	// L7 Router & Canary Traffic Splitting
+	targetCanary := canaryPool
+	if targetCanary == nil {
+		targetCanary = l7Pool
+	}
 	routerEngine := routing.NewRouter(l7Pool)
 	if len(cfg.Routes) > 0 {
 		for _, r := range cfg.Routes {
@@ -234,7 +256,7 @@ func main() {
 				Methods:      r.Methods,
 				CanaryWeight: r.CanaryWeight,
 				StripPrefix:  r.StripPrefix,
-			}, l7Pool, l7Pool)
+			}, l7Pool, targetCanary)
 		}
 	} else if l7Pool != nil {
 		routerEngine.AddRoute(routing.RouteConfig{
@@ -242,7 +264,7 @@ func main() {
 			Host:         "*",
 			PathPrefix:   "/",
 			CanaryWeight: 10,
-		}, l7Pool, l7Pool)
+		}, l7Pool, targetCanary)
 	}
 
 	if l7Server != nil {

@@ -113,3 +113,31 @@ func TestCache_Expiration(t *testing.T) {
 		t.Fatal("Expected miss after expiration")
 	}
 }
+
+func TestCache_StripSensitiveHeaders(t *testing.T) {
+	c := NewCache(DefaultCacheConfig(), nil)
+
+	req, _ := http.NewRequest("GET", "http://example.com/api/profile", nil)
+
+	headers := http.Header{
+		"Content-Type":  []string{"application/json"},
+		"Set-Cookie":    []string{"session_id=SECRET123; HttpOnly; Secure"},
+		"Authorization": []string{"Bearer token123"},
+	}
+	c.Put(req, http.StatusOK, headers, []byte(`{"user":"alice"}`))
+
+	cached, hit := c.Get(req)
+	if !hit {
+		t.Fatal("Expected cache hit")
+	}
+
+	if _, exists := cached.Headers["Set-Cookie"]; exists {
+		t.Fatal("CRITICAL SECURITY VULNERABILITY: Set-Cookie MUST NOT be cached!")
+	}
+	if _, exists := cached.Headers["Authorization"]; exists {
+		t.Fatal("CRITICAL SECURITY VULNERABILITY: Authorization MUST NOT be cached!")
+	}
+	if cached.Headers["Content-Type"][0] != "application/json" {
+		t.Fatal("Expected Content-Type to be preserved")
+	}
+}

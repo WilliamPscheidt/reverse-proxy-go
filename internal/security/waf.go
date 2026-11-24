@@ -1,7 +1,9 @@
 package security
 
 import (
+	"bytes"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -189,6 +191,21 @@ func (w *WAF) Inspect(r *http.Request, clientIP string, country string) (blocked
 		unescapedURI,
 		r.URL.Path,
 		r.URL.RawQuery,
+	}
+
+	// 4. Request Body Inspection (POST / PUT / PATCH / DELETE payloads)
+	if r.Body != nil && (r.Method == http.MethodPost || r.Method == http.MethodPut || r.Method == http.MethodPatch || r.Method == http.MethodDelete) {
+		bodySample, err := io.ReadAll(io.LimitReader(r.Body, 128*1024))
+		if err == nil && len(bodySample) > 0 {
+			// Reconstitute original body: the buffered sample + the remainder of r.Body
+			r.Body = io.NopCloser(io.MultiReader(bytes.NewReader(bodySample), r.Body))
+
+			sampleStr := string(bodySample)
+			testStrings = append(testStrings, sampleStr)
+			if unescaped, err := url.QueryUnescape(sampleStr); err == nil && unescaped != sampleStr {
+				testStrings = append(testStrings, unescaped)
+			}
+		}
 	}
 
 	// 4. Path Traversal & LFI

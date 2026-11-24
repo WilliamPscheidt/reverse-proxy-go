@@ -1260,6 +1260,9 @@ const dashboardHTML = `<!DOCTYPE html>
               <span class="status-badge status-healthy" id="streamConnBadge">
                 <span class="status-dot"></span> Conectado
               </span>
+              <span class="status-badge" style="background: rgba(56, 189, 248, 0.15); border: 1px solid rgba(56, 189, 248, 0.3); color: #38bdf8;">
+                <i class="fa-solid fa-gauge-high" style="font-size: 11px;"></i> <strong id="streamRps">0</strong> req/s
+              </span>
             </div>
 
             <div style="display: flex; align-items: center; gap: 10px;">
@@ -2211,9 +2214,12 @@ const dashboardHTML = `<!DOCTYPE html>
       }
     }
 
-    /* --- Live Stream (SSE) Logic --- */
+    /* --- Live Stream (SSE) Logic with Batched DOM Updates & RPS Meter --- */
     let eventSource = null;
     let streamPaused = false;
+    let streamQueue = [];
+    let streamRpsCounter = 0;
+    let isBatching = false;
 
     function initEventStream() {
       if (eventSource) return;
@@ -2224,19 +2230,88 @@ const dashboardHTML = `<!DOCTYPE html>
           if (badge) badge.className = 'status-badge status-healthy';
         };
         eventSource.onmessage = (e) => {
+          streamRpsCounter++;
           if (streamPaused) return;
           try {
             const data = JSON.parse(e.data);
-            appendStreamRow(data);
+            streamQueue.push(data);
+            if (streamQueue.length > 500) {
+              streamQueue.splice(0, streamQueue.length - 200); // keep memory bounded under heavy flood
+            }
           } catch (err) {}
         };
         eventSource.onerror = () => {
           const badge = document.getElementById('streamConnBadge');
           if (badge) badge.className = 'status-badge status-unhealthy';
         };
+
+        // Start DOM render loop (10 batches per second max, zero frame drop)
+        setInterval(flushStreamBatch, 100);
+
+        // Start RPS meter (computed every 1000ms)
+        setInterval(() => {
+          const rpsEl = document.getElementById('streamRps');
+          if (rpsEl) {
+            rpsEl.innerText = streamRpsCounter.toLocaleString();
+          }
+          streamRpsCounter = 0;
+        }, 1000);
+
       } catch (err) {
         console.error('SSE connection failed:', err);
       }
+    }
+
+    function flushStreamBatch() {
+      if (streamPaused || streamQueue.length === 0) return;
+      const tbody = document.getElementById('streamTableBody');
+      if (!tbody) return;
+
+      if (tbody.children.length === 1 && tbody.children[0].innerText.includes('Aguardando')) {
+        tbody.innerHTML = '';
+      }
+
+      // Pop up to 25 items per batch
+      const batch = streamQueue.splice(0, 25);
+      const frag = document.createDocumentFragment();
+
+      for (let i = batch.length - 1; i >= 0; i--) {
+        const evt = batch[i];
+        const tr = document.createElement('tr');
+        const timeStr = new Date(evt.timestamp).toLocaleTimeString();
+        const method = (evt.method || 'GET').toLowerCase();
+
+        let statusClass = 'status-2xx';
+        if (evt.status_code >= 300 && evt.status_code < 400) statusClass = 'status-3xx';
+        else if (evt.status_code >= 400 && evt.status_code < 500) statusClass = 'status-4xx';
+        else if (evt.status_code >= 500) statusClass = 'status-5xx';
+
+        let upstreamBadge = '<span class="mono">' + (evt.upstream || '-') + '</span>';
+        if (evt.cache_hit) {
+          upstreamBadge = '<span class="badge" style="background: rgba(16, 185, 129, 0.2); color: #34d399; font-weight: 700;"><i class="fa-solid fa-bolt"></i> CACHE HIT</span>';
+        } else if (evt.waf_blocked) {
+          upstreamBadge = '<span class="badge" style="background: rgba(239, 68, 68, 0.2); color: #f87171; font-weight: 700;"><i class="fa-solid fa-shield-virus"></i> WAF [' + (evt.waf_rule || 'BLOCK') + ']</span>';
+        }
+
+        tr.innerHTML = 
+          '<td class="mono" style="color: var(--text-muted);">' + timeStr + '</td>' +
+          '<td><span class="method-badge method-' + method + '">' + (evt.method || 'GET') + '</span></td>' +
+          '<td class="mono" style="font-weight: 500; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">' + (evt.path || '/') + '</td>' +
+          '<td><span class="status-pill ' + statusClass + '">' + (evt.status_code || 200) + '</span></td>' +
+          '<td class="mono" style="color: #94a3b8;">' + (evt.duration_ms || 0.1).toFixed(2) + 'ms</td>' +
+          '<td>${upstreamBadge}</td>' +
+          '<td class="mono">' + (evt.client_ip || '127.0.0.1') + '</td>' +
+          '<td><span class="badge badge-protocol">' + (evt.country || 'US') + '</span></td>';
+
+        frag.appendChild(tr);
+      }
+
+      window.requestAnimationFrame(() => {
+        tbody.insertBefore(frag, tbody.firstChild);
+        while (tbody.children.length > 200) {
+          tbody.removeChild(tbody.lastChild);
+        }
+      });
     }
 
     function toggleStream() {
@@ -2248,49 +2323,9 @@ const dashboardHTML = `<!DOCTYPE html>
     }
 
     function clearStreamTable() {
+      streamQueue = [];
       const tbody = document.getElementById('streamTableBody');
       if (tbody) tbody.innerHTML = '<tr><td colspan="8" style="text-align: center; color: var(--text-muted); padding: 30px;">Feed limpo. Aguardando novas conexões...</td></tr>';
-    }
-
-    function appendStreamRow(evt) {
-      const tbody = document.getElementById('streamTableBody');
-      if (!tbody) return;
-
-      if (tbody.children.length === 1 && tbody.children[0].innerText.includes('Aguardando')) {
-        tbody.innerHTML = '';
-      }
-
-      const tr = document.createElement('tr');
-      const timeStr = new Date(evt.timestamp).toLocaleTimeString();
-      const method = (evt.method || 'GET').toLowerCase();
-
-      let statusClass = 'status-2xx';
-      if (evt.status_code >= 300 && evt.status_code < 400) statusClass = 'status-3xx';
-      else if (evt.status_code >= 400 && evt.status_code < 500) statusClass = 'status-4xx';
-      else if (evt.status_code >= 500) statusClass = 'status-5xx';
-
-      let upstreamBadge = '<span class="mono">' + (evt.upstream || '-') + '</span>';
-      if (evt.cache_hit) {
-        upstreamBadge = '<span class="badge" style="background: rgba(16, 185, 129, 0.2); color: #34d399; font-weight: 700;"><i class="fa-solid fa-bolt"></i> CACHE HIT</span>';
-      } else if (evt.waf_blocked) {
-        upstreamBadge = '<span class="badge" style="background: rgba(239, 68, 68, 0.2); color: #f87171; font-weight: 700;"><i class="fa-solid fa-shield-virus"></i> WAF [' + (evt.waf_rule || 'BLOCK') + ']</span>';
-      }
-
-      tr.innerHTML = 
-        '<td class="mono" style="color: var(--text-muted);">' + timeStr + '</td>' +
-        '<td><span class="method-badge method-' + method + '">' + (evt.method || 'GET') + '</span></td>' +
-        '<td class="mono" style="font-weight: 500; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">' + (evt.path || '/') + '</td>' +
-        '<td><span class="status-pill ' + statusClass + '">' + (evt.status_code || 200) + '</span></td>' +
-        '<td class="mono" style="color: #94a3b8;">' + (evt.duration_ms || 0.1).toFixed(2) + 'ms</td>' +
-        '<td>' + upstreamBadge + '</td>' +
-        '<td class="mono">' + (evt.client_ip || '127.0.0.1') + '</td>' +
-        '<td><span class="badge badge-protocol">' + (evt.country || 'US') + '</span></td>';
-
-      tbody.insertBefore(tr, tbody.firstChild);
-
-      if (tbody.children.length > 200) {
-        tbody.removeChild(tbody.lastChild);
-      }
     }
 
     function filterStreamTable() {

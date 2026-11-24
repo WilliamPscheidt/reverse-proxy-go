@@ -39,10 +39,11 @@ type BackendConfig struct {
 
 // L7Config holds HTTP reverse proxy settings.
 type L7Config struct {
-	Enabled   bool            `yaml:"enabled"`
-	Listen    string          `yaml:"listen"`    // e.g., ":8080"
-	Algorithm string          `yaml:"algorithm"` // "round_robin", "least_conn", "ip_hash"
-	Backends  []BackendConfig `yaml:"backends"`
+	Enabled        bool            `yaml:"enabled"`
+	Listen         string          `yaml:"listen"`    // e.g., ":8080"
+	Algorithm      string          `yaml:"algorithm"` // "round_robin", "least_conn", "ip_hash"
+	Backends       []BackendConfig `yaml:"backends"`
+	CanaryBackends []BackendConfig `yaml:"canary_backends"`
 }
 
 // L4Config holds TCP load balancer settings.
@@ -166,6 +167,9 @@ func DefaultConfig() *Config {
 				{URL: "http://127.0.0.1:8081", Weight: 1},
 				{URL: "http://127.0.0.1:8082", Weight: 1},
 				{URL: "http://127.0.0.1:8083", Weight: 1},
+			},
+			CanaryBackends: []BackendConfig{
+				{URL: "http://127.0.0.1:8084", Weight: 1},
 			},
 		},
 		L4: L4Config{

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -37,6 +38,7 @@ type L7Server struct {
 	mu              sync.RWMutex
 	config          config.L7Config
 	pool            *BackendPool
+	canaryPool      *BackendPool
 	balancer        BalancerInterface
 	rateLimiter     ratelimit.Limiter
 	metrics         *metrics.Metrics
@@ -127,6 +129,45 @@ func (s *L7Server) Handler() http.Handler {
 // GetPool returns the backend pool for L7.
 func (s *L7Server) GetPool() *BackendPool {
 	return s.pool
+}
+
+// SetCanaryPool configures a dedicated upstream pool for canary traffic.
+func (s *L7Server) SetCanaryPool(cp *BackendPool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.canaryPool = cp
+	s.InitPoolReverseProxies(cp)
+}
+
+// GetCanaryPool returns the canary upstream pool.
+func (s *L7Server) GetCanaryPool() *BackendPool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.canaryPool
+}
+
+// InitPoolReverseProxies initializes reverse proxy instances for backends in a pool.
+func (s *L7Server) InitPoolReverseProxies(p *BackendPool) {
+	if p == nil {
+		return
+	}
+	for _, b := range p.GetBackends() {
+		if b.URL != nil && b.ReverseProxy == nil {
+			targetURL := b.URL
+			rp := &httputil.ReverseProxy{
+				Rewrite: func(pr *httputil.ProxyRequest) {
+					pr.SetURL(targetURL)
+					pr.SetXForwarded()
+				},
+				Transport: s.transport,
+				ErrorHandler: func(w http.ResponseWriter, req *http.Request, err error) {
+					log.Printf("[L7] Backend %s error: %v", targetURL.Host, err)
+					http.Error(w, fmt.Sprintf("Bad Gateway: upstream %s unreachable", targetURL.Host), http.StatusBadGateway)
+				},
+			}
+			b.ReverseProxy = rp
+		}
+	}
 }
 
 // GetBalancer returns the active load balancer.
@@ -490,11 +531,26 @@ func (s *L7Server) handleHTTP(w http.ResponseWriter, r *http.Request) {
 		maxAttempts = 1 + retryPol.MaxRetries()
 	}
 
+	// Buffer request body in memory so subsequent retry attempts don't send an exhausted empty body (EOF)
+	var bodyBytes []byte
+	if maxAttempts > 1 && r.Body != nil && (r.Method == http.MethodPut || r.Method == http.MethodDelete || r.Method == http.MethodPost || r.Method == http.MethodPatch) {
+		bodyBytes, _ = io.ReadAll(r.Body)
+		r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+		r.GetBody = func() (io.ReadCloser, error) {
+			return io.NopCloser(bytes.NewReader(bodyBytes)), nil
+		}
+	}
+
 	var lastRecorder *bufferedRecorder
 	var finalBackend *Backend
 	var lastErr error
 
 	for attempt := 0; attempt < maxAttempts; attempt++ {
+		// Reset request body stream for this attempt if a body was present
+		if len(bodyBytes) > 0 {
+			r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+		}
+
 		backend, err := bal.NextHTTP(targetPool, r, clientIP)
 		if err != nil {
 			lastErr = err
