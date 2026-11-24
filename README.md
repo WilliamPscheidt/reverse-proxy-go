@@ -1,4 +1,18 @@
-# Reverse Proxy & Load Balancer L4/L7 (Go)
+<div align="center">
+  <img src="docs/banner.png" alt="ProxyGO - High-Concurrency Reverse Proxy & Load Balancer L4/L7" width="100%" />
+
+  <br><br>
+
+  <a href="https://go.dev/"><img src="https://img.shields.io/badge/Go-1.22+-00ADD8?style=for-the-badge&logo=go" alt="Go Version" /></a>
+  <a href="https://www.docker.com/"><img src="https://img.shields.io/badge/Docker-Compose-2496ED?style=for-the-badge&logo=docker" alt="Docker" /></a>
+  <a href="https://redis.io/"><img src="https://img.shields.io/badge/Redis-Distributed_Rate_Limit-DC382D?style=for-the-badge&logo=redis" alt="Redis" /></a>
+  <a href="https://prometheus.io/"><img src="https://img.shields.io/badge/Prometheus-Metrics_:2112-E6522C?style=for-the-badge&logo=prometheus" alt="Prometheus" /></a>
+  <img src="https://img.shields.io/badge/License-MIT-green.svg?style=for-the-badge" alt="License" />
+</div>
+
+<br>
+
+# ProxyGO: Reverse Proxy & Load Balancer L4/L7
 
 Balanceador de carga e proxy reverso de alta performance construído em Go, com suporte simultâneo a camada de transporte (L4 - TCP) e camada de aplicação (L7 - HTTP/1.1 e HTTP/2).
 
