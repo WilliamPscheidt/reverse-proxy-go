@@ -13,6 +13,7 @@ import (
 	"github.com/WilliamPscheidt/reverse-proxy-go/internal/config"
 	"github.com/WilliamPscheidt/reverse-proxy-go/internal/metrics"
 	"github.com/WilliamPscheidt/reverse-proxy-go/internal/ratelimit"
+	"github.com/WilliamPscheidt/reverse-proxy-go/internal/security"
 )
 
 // BalancerTCPInterface abstracts load balancing algorithms for L4.
@@ -30,6 +31,7 @@ type L4Server struct {
 	balancer    BalancerTCPInterface
 	rateLimiter ratelimit.Limiter
 	metrics     *metrics.Metrics
+	blacklist   *security.Blacklist
 	bufferPool  *BufferPool
 	listener    net.Listener
 	closed      atomic.Bool
@@ -123,6 +125,20 @@ func (s *L4Server) SetBalancer(bal BalancerTCPInterface) {
 	s.balancer = bal
 }
 
+// SetBlacklist registers the security blacklist for L4.
+func (s *L4Server) SetBlacklist(bl *security.Blacklist) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.blacklist = bl
+}
+
+// GetBlacklist returns the registered security blacklist.
+func (s *L4Server) GetBlacklist() *security.Blacklist {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.blacklist
+}
+
 // AddBackendTarget dynamically adds a new backend to L4.
 func (s *L4Server) AddBackendTarget(addr string, weight int) *Backend {
 	backend := NewBackend(nil, addr, weight)
@@ -146,6 +162,11 @@ func (s *L4Server) handleTCPConn(clientConn net.Conn) {
 	clientIP, _, err := net.SplitHostPort(clientAddr)
 	if err != nil {
 		clientIP = clientAddr
+	}
+
+	// 0. Security Blacklist Check
+	if s.blacklist != nil && s.blacklist.IsBlocked(clientIP) {
+		return
 	}
 
 	// 1. Rate Limiting Check

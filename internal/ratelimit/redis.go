@@ -210,3 +210,8 @@ func (r *RedisLimiter) Close() {
 		r.fallback.Close()
 	}
 }
+
+// Client returns the underlying Redis client instance.
+func (r *RedisLimiter) Client() *redis.Client {
+	return r.client
+}

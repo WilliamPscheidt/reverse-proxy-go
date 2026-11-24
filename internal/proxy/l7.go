@@ -17,6 +17,7 @@ import (
 	"github.com/WilliamPscheidt/reverse-proxy-go/internal/config"
 	"github.com/WilliamPscheidt/reverse-proxy-go/internal/metrics"
 	"github.com/WilliamPscheidt/reverse-proxy-go/internal/ratelimit"
+	"github.com/WilliamPscheidt/reverse-proxy-go/internal/security"
 )
 
 // BalancerInterface abstracts load balancing algorithms for L7.
@@ -34,6 +35,7 @@ type L7Server struct {
 	rateLimiter ratelimit.Limiter
 	metrics     *metrics.Metrics
 	analytics   *analytics.Analytics
+	blacklist   *security.Blacklist
 	transport   *http.Transport
 	httpServer  *http.Server
 }
@@ -136,6 +138,20 @@ func (s *L7Server) GetAnalytics() *analytics.Analytics {
 	return s.analytics
 }
 
+// SetBlacklist registers the security blacklist.
+func (s *L7Server) SetBlacklist(bl *security.Blacklist) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.blacklist = bl
+}
+
+// GetBlacklist returns the registered security blacklist.
+func (s *L7Server) GetBlacklist() *security.Blacklist {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.blacklist
+}
+
 // SetBalancer dynamically updates the load balancing algorithm.
 func (s *L7Server) SetBalancer(bal BalancerInterface) {
 	s.mu.Lock()
@@ -214,6 +230,20 @@ func (w *statusWriter) Write(b []byte) (int, error) {
 func (s *L7Server) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	clientIP := getClientIP(r)
+
+	// 0. Security Blacklist Check
+	if s.blacklist != nil && s.blacklist.IsBlocked(clientIP) {
+		if s.analytics != nil {
+			s.analytics.RecordRequest(clientIP, http.StatusForbidden)
+		}
+		if s.metrics != nil {
+			s.metrics.RecordHTTPRequest("blacklist", r.Method, http.StatusForbidden, time.Since(start))
+		}
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"error":"Forbidden","message":"Access Denied: Your IP address has been blacklisted by administrator"}`))
+		return
+	}
 
 	// 1. Rate Limiting Check
 	if s.rateLimiter != nil && !s.rateLimiter.Allow(clientIP) {

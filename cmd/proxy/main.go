@@ -19,6 +19,8 @@ import (
 	"github.com/WilliamPscheidt/reverse-proxy-go/internal/metrics"
 	"github.com/WilliamPscheidt/reverse-proxy-go/internal/proxy"
 	"github.com/WilliamPscheidt/reverse-proxy-go/internal/ratelimit"
+	"github.com/WilliamPscheidt/reverse-proxy-go/internal/security"
+	"github.com/redis/go-redis/v9"
 )
 
 var (
@@ -167,15 +169,29 @@ func main() {
 			cfg.HealthCheck.Interval, cfg.HealthCheck.Timeout)
 	}
 
-	// 7. Setup Web Administration Dashboard & REST API
+	// 7. Setup Security Blacklist, Analytics & Web Administration Dashboard
 	var adminServer *admin.Server
+	var redisClient *redis.Client
+	if cfg.RateLimit.Strategy == "redis" && cfg.RateLimit.Redis.Addr != "" {
+		if rl, ok := rateLimiter.(*ratelimit.RedisLimiter); ok {
+			redisClient = rl.Client()
+		}
+	}
+	blacklist := security.NewBlacklist(redisClient)
+
 	analyticsCollector := analytics.NewAnalytics()
+	analyticsCollector.SetBlacklistChecker(blacklist.IsBlocked)
+
 	if l7Server != nil {
+		l7Server.SetBlacklist(blacklist)
 		l7Server.SetAnalytics(analyticsCollector)
+	}
+	if l4Server != nil {
+		l4Server.SetBlacklist(blacklist)
 	}
 
 	if cfg.Admin.Enabled {
-		adminServer = admin.NewServer(cfg, l7Server, l4Server, rateLimiter, m, analyticsCollector)
+		adminServer = admin.NewServer(cfg, l7Server, l4Server, rateLimiter, m, analyticsCollector, blacklist)
 		go func() {
 			if err := adminServer.Start(); err != nil && err != http.ErrServerClosed {
 				log.Printf("[Admin] Server error: %v", err)

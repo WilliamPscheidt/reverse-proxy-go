@@ -87,6 +87,11 @@ Endpoint `/metrics` na porta `:2112` expondo:
 - **L7**: Reescrita e injeção de cabeçalhos padrão (`X-Forwarded-For`, `X-Real-IP`, `X-Forwarded-Proto`, `X-Forwarded-Host`).
 - **L4**: Encaminhamento TCP bidirecional com reutilização de buffers via `sync.Pool`.
 
+### 6. Sistema de Segurança e Blacklist de IPs (WAF / HTTP 403)
+- **Bloqueio Instantâneo**: IPs inseridos na blacklist têm requisições HTTP rejeitadas imediatamente com `403 Forbidden` e conexões TCP (L4) encerradas antes de consumir recursos do proxy.
+- **Interação Geográfica no Mapa**: Ao clicar em qualquer região azul no mapa mundial, um modal abre listando todos os IPs detectados naquela região geográfica com botões de bloqueio e desbloqueio em tempo real.
+- **Persistência Distribuída com Redis**: Bloqueios podem ser sincronizados via Redis (`proxy:blacklist:<ip>`) com fallback de altíssima performance em memória (`sync.RWMutex`).
+
 ---
 
 ## 📦 Como Usar
@@ -119,7 +124,11 @@ O proxy disponibiliza uma interface visual administrativa integrada e estilizada
   - **Configurações Gerais**: Ajuste de timeouts (*Read*, *Write*, *Dial*), modo operacional (*Both L7/L4*, *L7 Only*, *L4 Only*) e parâmetros do health check ativo (*path*, *intervalo*, *unhealthy threshold*).
 - **API REST Administrativa**:
   - `GET /api/status`: Estatísticas gerais, uptime e saúde do proxy e do Redis.
-  - `GET /api/analytics`: Janelas temporais deslizantes (minuto, hora, dia), top IPs e localização geográfica.
+  - `GET /api/analytics`: Janelas temporais deslizantes (minuto, hora, dia), top IPs e localização geográfica com IPs associados.
+  - `POST /api/analytics/reset`: Zera os contadores e métricas de tráfego.
+  - `GET /api/blacklist`: Lista todos os IPs bloqueados e seus motivos.
+  - `POST /api/blacklist`: Bloqueia um endereço IP (`{"ip": "...", "reason": "..."}`).
+  - `DELETE /api/blacklist`: Desbloqueia um endereço IP (`{"ip": "..."}`).
   - `GET /api/settings`: Leitura das configurações gerais do sistema.
   - `POST /api/settings`: Atualização em tempo real de timeouts, thresholds e modo operacional.
   - `GET /api/backends`: Lista todos os destinos e suas métricas.
@@ -188,7 +197,8 @@ k6 run --vus 100 --duration 30s benchmark.js
 │   ├── analytics/          # Janelas deslizantes (min/hora/dia), GeoIP e Top IPs
 │   ├── balancer/           # Algoritmos Round-Robin, Least Connections e IP Hash
 │   ├── health/             # Health check ativo em background
-│   ├── ratelimit/          # Token Bucket sharded in-memory
+│   ├── ratelimit/          # Token Bucket sharded in-memory e Redis distribuído
+│   ├── security/           # Blacklist de IPs em memória e Redis (HTTP 403)
 │   ├── metrics/            # Instrumentação Prometheus
 │   ├── proxy/              # Implementações L4 TCP e L7 HTTP
 │   └── config/             # Leitura e parsing de configurações

@@ -516,6 +516,59 @@ const dashboardHTML = `<!DOCTYPE html>
     .algo-indicator { font-size: 12px; color: #60a5fa; display: none; }
     .algo-card.active .algo-indicator { display: inline-block; }
 
+    /* Modal Backdrop & Card */
+    .modal-backdrop {
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0, 0, 0, 0.75);
+      backdrop-filter: blur(4px);
+      z-index: 1000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    .modal-card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      width: 100%;
+      max-width: 680px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
+      overflow: hidden;
+      animation: modalFadeIn 0.15s ease-out;
+    }
+    @keyframes modalFadeIn {
+      from { opacity: 0; transform: scale(0.96); }
+      to { opacity: 1; transform: scale(1); }
+    }
+    .modal-header {
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .modal-body {
+      padding: 20px;
+      max-height: 70vh;
+      overflow-y: auto;
+    }
+    .btn-close {
+      background: transparent;
+      border: none;
+      color: var(--text-muted);
+      font-size: 18px;
+      cursor: pointer;
+      padding: 4px 8px;
+      border-radius: 4px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.15s ease;
+    }
+    .btn-close:hover { color: #fff; background: var(--card-sub); }
+
     /* Toast */
     #toast {
       position: fixed;
@@ -664,6 +717,9 @@ const dashboardHTML = `<!DOCTYPE html>
               Distribuição Geográfica dos Requests
             </div>
             <div style="display: flex; align-items: center; gap: 12px;">
+              <span style="font-size: 11px; color: #60a5fa; background: rgba(37, 99, 235, 0.1); border: 1px solid rgba(37, 99, 235, 0.3); padding: 3px 8px; border-radius: 4px;">
+                <i class="fa-solid fa-hand-pointer"></i> Clique em uma região azul para ver e bloquear IPs
+              </span>
               <span style="font-size: 12px; color: var(--text-muted);" id="geoSummary">0 regiões ativas</span>
               <button onclick="resetAnalytics()" class="btn btn-secondary btn-sm" title="Zerar histórico de requisições">
                 <i class="fa-solid fa-arrows-rotate"></i> Zerar Métricas
@@ -692,10 +748,11 @@ const dashboardHTML = `<!DOCTYPE html>
                     <th>Endereço IP</th>
                     <th>Volume</th>
                     <th>Status</th>
+                    <th style="text-align: right;">Ação</th>
                   </tr>
                 </thead>
                 <tbody id="topIPsTable">
-                  <tr><td colspan="3" style="text-align: center; color: var(--text-muted);">Aguardando tráfego...</td></tr>
+                  <tr><td colspan="4" style="text-align: center; color: var(--text-muted);">Aguardando tráfego...</td></tr>
                 </tbody>
               </table>
             </div>
@@ -896,6 +953,45 @@ const dashboardHTML = `<!DOCTYPE html>
               </div>
             </div>
           </div>
+
+          <!-- IP Blacklist Section Box -->
+          <div class="section-box" style="grid-column: 1 / -1; margin-top: 10px;">
+            <div class="section-header">
+              <div class="section-title">
+                <i class="fa-solid fa-ban" style="color: #f87171;"></i>
+                Lista Negra de IPs (Blacklist - HTTP 403 Forbidden)
+              </div>
+              <span class="badge badge-offline" id="blacklistCountBadge">0 IPs Bloqueados</span>
+            </div>
+            <div class="section-body">
+              <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 14px;">
+                IPs nesta lista têm conexão ou requisições HTTP imediatamente rejeitadas antes de qualquer processamento ou balanceamento.
+              </div>
+              <form onsubmit="manualBlockIP(event)" style="display: flex; gap: 10px; margin-bottom: 16px;">
+                <input type="text" id="manualBlockInput" placeholder="Ex: 189.40.12.5 ou 203.0.113.195" style="flex: 1;" required />
+                <input type="text" id="manualBlockReason" placeholder="Motivo do bloqueio (opcional)" style="flex: 1;" />
+                <button type="submit" class="btn btn-danger">
+                  <i class="fa-solid fa-ban"></i> Adicionar à Blacklist
+                </button>
+              </form>
+
+              <div class="table-wrapper">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Endereço IP Bloqueado</th>
+                      <th>Motivo</th>
+                      <th>Data / Hora do Bloqueio</th>
+                      <th style="text-align: right;">Ação</th>
+                    </tr>
+                  </thead>
+                  <tbody id="blacklistTable">
+                    <tr><td colspan="4" style="text-align: center; color: var(--text-muted); padding: 18px;">Nenhum IP bloqueado no momento.</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
         </div>
       </section>
 
@@ -1014,6 +1110,49 @@ const dashboardHTML = `<!DOCTYPE html>
     </main>
   </div>
 
+  <!-- Region IPs & Blacklist Modal -->
+  <div id="regionModal" class="modal-backdrop" style="display: none;" onclick="closeModalOnBackdrop(event)">
+    <div class="modal-card">
+      <div class="modal-header">
+        <div style="display: flex; align-items: center; gap: 12px;">
+          <div style="width: 34px; height: 34px; background: rgba(37, 99, 235, 0.15); border: 1px solid rgba(96, 165, 250, 0.3); border-radius: 8px; display: flex; align-items: center; justify-content: center;">
+            <i class="fa-solid fa-location-dot" style="color: #60a5fa; font-size: 16px;"></i>
+          </div>
+          <div>
+            <div style="font-size: 15px; font-weight: 600; color: #fff;" id="modalRegionTitle">São Paulo, Brasil</div>
+            <div style="font-size: 11px; color: var(--text-muted);" id="modalRegionSub">Tráfego registrado por IP</div>
+          </div>
+        </div>
+        <button onclick="closeRegionModal()" class="btn-close" title="Fechar"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+
+      <div class="modal-body">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px;">
+          <div style="font-size: 12px; color: var(--text-muted);">
+            Endereços IP detectados nesta região. Bloqueie IPs abusivos para rejeitar acessos com <strong style="color: #f87171;">HTTP 403 Forbidden</strong>.
+          </div>
+          <span class="badge badge-protocol" id="modalIPCount">0 IPs</span>
+        </div>
+
+        <div class="table-wrapper">
+          <table>
+            <thead>
+              <tr>
+                <th>Endereço IP</th>
+                <th>Volume</th>
+                <th>Status</th>
+                <th style="text-align: right;">Ação de Segurança</th>
+              </tr>
+            </thead>
+            <tbody id="modalIPsTable">
+              <tr><td colspan="4" style="text-align: center; color: var(--text-muted); padding: 18px;">Carregando dados da região...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div id="toast">
     <i id="toastIcon" class="fa-solid fa-circle-check" style="color: var(--green);"></i>
     <span id="toastMsg">Mensagem</span>
@@ -1021,6 +1160,8 @@ const dashboardHTML = `<!DOCTYPE html>
 
   <script>
     let vectorMap = null;
+    let activeGeoLocations = [];
+    let currentModalRegion = null;
 
     function initMap() {
       if (vectorMap) return;
@@ -1062,13 +1203,19 @@ const dashboardHTML = `<!DOCTYPE html>
             }
           },
           markers: [],
+          onMarkerClick: function(event, index) {
+            if (activeGeoLocations && activeGeoLocations[index]) {
+              openRegionModal(activeGeoLocations[index]);
+            }
+          },
           onMarkerTooltipShow: function(event, tooltip, index) {
             const m = vectorMap.params.markers[index];
             if (m) {
               tooltip.text(
                 '<div style="font-weight: 600; color: #fff; margin-bottom: 3px;">' + m.name + '</div>' +
                 '<div style="font-size: 11px; color: #9ca3af;">Volume: <strong style="color: #60a5fa;">' + 
-                (m.count || 0).toLocaleString() + '</strong> requisições</div>',
+                (m.count || 0).toLocaleString() + '</strong> requisições</div>' +
+                '<div style="font-size: 10px; color: #60a5fa; margin-top: 4px;"><i class="fa-solid fa-hand-pointer"></i> Clique para ver IPs e gerenciar blacklist</div>',
                 true
               );
             }
@@ -1083,6 +1230,8 @@ const dashboardHTML = `<!DOCTYPE html>
       if (!vectorMap) initMap();
       if (!vectorMap) return;
 
+      activeGeoLocations = geoList || [];
+
       try {
         vectorMap.removeMarkers();
 
@@ -1093,13 +1242,22 @@ const dashboardHTML = `<!DOCTYPE html>
           coords: [g.lat, g.lng],
           count: g.count,
           style: {
-            r: Math.max(5, Math.min(16, 5 + Math.log2(g.count + 1) * 2.2)),
+            r: Math.max(6, Math.min(18, 6 + Math.log2(g.count + 1) * 2.2)),
             fill: g.count > 0 ? '#3b82f6' : '#64748b',
             stroke: g.count > 0 ? '#93c5fd' : '#475569'
           }
         }));
 
         vectorMap.addMarkers(markers);
+
+        // Keep modal live updated if open
+        if (currentModalRegion) {
+          const updated = activeGeoLocations.find(g => g.id === currentModalRegion.id || (g.city === currentModalRegion.city && g.country === currentModalRegion.country));
+          if (updated) {
+            currentModalRegion = updated;
+            renderModalIPsTable(updated);
+          }
+        }
       } catch (err) {
         console.error('Update map error:', err);
       }
@@ -1169,6 +1327,9 @@ const dashboardHTML = `<!DOCTYPE html>
           const data = await resStatus.json();
           document.getElementById('uptimeBadge').innerText = 'Uptime: ' + data.uptime;
           document.getElementById('sidebarMode').innerText = (data.mode || 'both').toUpperCase() + ' Mode';
+          if (document.getElementById('blacklistCountBadge')) {
+            document.getElementById('blacklistCountBadge').innerText = (data.blacklist_count || 0) + ' IPs Bloqueados';
+          }
 
           if (data.rate_limit) {
             let stratText = data.rate_limit.strategy ? data.rate_limit.strategy.toUpperCase() : 'MEMORY';
@@ -1212,15 +1373,24 @@ const dashboardHTML = `<!DOCTYPE html>
           if (a.top_ips && a.top_ips.length > 0) {
             let html = '';
             a.top_ips.forEach(ip => {
+              const statusBadge = ip.blacklisted
+                ? '<span class="badge badge-offline"><i class="fa-solid fa-ban" style="font-size: 8px;"></i> Blacklist</span>'
+                : '<span class="badge badge-online"><i class="fa-solid fa-circle" style="font-size: 6px;"></i> Permitido</span>';
+
+              const actionBtn = ip.blacklisted
+                ? '<button onclick="unblockIP(\'' + ip.ip + '\')" class="btn btn-secondary btn-sm" style="color: #34d399; font-size: 11px; padding: 2px 7px;" title="Desbloquear"><i class="fa-solid fa-shield"></i> Desbloquear</button>'
+                : '<button onclick="blockIP(\'' + ip.ip + '\')" class="btn btn-danger btn-sm" style="font-size: 11px; padding: 2px 7px;" title="Bloquear IP com HTTP 403"><i class="fa-solid fa-ban"></i> Bloquear</button>';
+
               html += '<tr>' +
-                '<td class="mono" style="color: #fff;">' + ip.ip + '</td>' +
+                '<td><strong class="mono" style="color: #fff;">' + ip.ip + '</strong></td>' +
                 '<td class="mono">' + ip.count.toLocaleString() + '</td>' +
-                '<td><span class="badge badge-online">Ativo</span></td>' +
+                '<td>' + statusBadge + '</td>' +
+                '<td style="text-align: right;">' + actionBtn + '</td>' +
               '</tr>';
             });
             topTbody.innerHTML = html;
           } else {
-            topTbody.innerHTML = '<tr><td colspan="3" style="text-align: center; color: var(--text-muted); padding: 16px;">Sem tráfego registrado.</td></tr>';
+            topTbody.innerHTML = '<tr><td colspan="4" style="text-align: center; color: var(--text-muted); padding: 16px;">Sem tráfego registrado.</td></tr>';
           }
 
           // Update Vector Map & Summary
@@ -1232,6 +1402,7 @@ const dashboardHTML = `<!DOCTYPE html>
         }
 
         await fetchBackends();
+        await fetchBlacklist();
       } catch (err) {
         console.error('Fetch error:', err);
       }
@@ -1432,6 +1603,152 @@ const dashboardHTML = `<!DOCTYPE html>
         }
       } catch (err) {
         showToast('Erro ao zerar métricas', true);
+      }
+    }
+
+    function openRegionModal(region) {
+      currentModalRegion = region;
+      document.getElementById('modalRegionTitle').innerText = region.city + ', ' + region.country;
+      document.getElementById('modalRegionSub').innerText = (region.count || 0).toLocaleString() + ' requisições acumuladas';
+
+      renderModalIPsTable(region);
+      document.getElementById('regionModal').style.display = 'flex';
+    }
+
+    function closeRegionModal() {
+      document.getElementById('regionModal').style.display = 'none';
+      currentModalRegion = null;
+    }
+
+    function closeModalOnBackdrop(e) {
+      if (e.target && e.target.id === 'regionModal') {
+        closeRegionModal();
+      }
+    }
+
+    function renderModalIPsTable(region) {
+      const tbody = document.getElementById('modalIPsTable');
+      const countBadge = document.getElementById('modalIPCount');
+
+      if (!region.ips || region.ips.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="4" style="text-align: center; color: var(--text-muted); padding: 22px;">Nenhum IP individual registrado nesta região.</td></tr>';
+        countBadge.innerText = '0 IPs';
+        return;
+      }
+
+      countBadge.innerText = region.ips.length + (region.ips.length === 1 ? ' IP' : ' IPs');
+      let html = '';
+      region.ips.forEach(item => {
+        const statusBadge = item.blacklisted
+          ? '<span class="badge badge-offline"><i class="fa-solid fa-ban" style="font-size: 8px;"></i> Blacklist (403)</span>'
+          : '<span class="badge badge-online"><i class="fa-solid fa-circle" style="font-size: 6px;"></i> Permitido</span>';
+
+        const actionBtn = item.blacklisted
+          ? '<button onclick="unblockIP(\'' + item.ip + '\')" class="btn btn-secondary btn-sm" style="color: #34d399; border-color: rgba(16, 185, 129, 0.4);" title="Permitir acesso"><i class="fa-solid fa-shield"></i> Desbloquear</button>'
+          : '<button onclick="blockIP(\'' + item.ip + '\')" class="btn btn-danger btn-sm" title="Bloquear IP com HTTP 403"><i class="fa-solid fa-ban"></i> Bloquear (Blacklist)</button>';
+
+        html += '<tr>' +
+          '<td><strong class="mono" style="color: #fff;">' + item.ip + '</strong></td>' +
+          '<td class="mono">' + item.count.toLocaleString() + ' reqs</td>' +
+          '<td>' + statusBadge + '</td>' +
+          '<td style="text-align: right;">' + actionBtn + '</td>' +
+        '</tr>';
+      });
+
+      tbody.innerHTML = html;
+    }
+
+    async function blockIP(ip, reason) {
+      try {
+        const res = await fetch('/api/blacklist', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ip: ip, reason: reason || 'Bloqueado via dashboard administrativo' })
+        });
+        if (res.ok) {
+          showToast('IP ' + ip + ' bloqueado na Blacklist (HTTP 403)');
+          await fetchStatus();
+          if (currentModalRegion) {
+            const found = activeGeoLocations.find(g => g.id === currentModalRegion.id || (g.city === currentModalRegion.city && g.country === currentModalRegion.country));
+            if (found) {
+              currentModalRegion = found;
+              renderModalIPsTable(found);
+            }
+          }
+        } else {
+          showToast('Erro ao bloquear IP', true);
+        }
+      } catch (err) {
+        showToast('Erro de conexão ao bloquear IP', true);
+      }
+    }
+
+    async function unblockIP(ip) {
+      try {
+        const res = await fetch('/api/blacklist', {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ip: ip })
+        });
+        if (res.ok) {
+          showToast('IP ' + ip + ' desbloqueado com sucesso');
+          await fetchStatus();
+          if (currentModalRegion) {
+            const found = activeGeoLocations.find(g => g.id === currentModalRegion.id || (g.city === currentModalRegion.city && g.country === currentModalRegion.country));
+            if (found) {
+              currentModalRegion = found;
+              renderModalIPsTable(found);
+            }
+          }
+        } else {
+          showToast('Erro ao desbloquear IP', true);
+        }
+      } catch (err) {
+        showToast('Erro de conexão ao desbloquear IP', true);
+      }
+    }
+
+    async function manualBlockIP(e) {
+      e.preventDefault();
+      const input = document.getElementById('manualBlockInput');
+      const reasonInput = document.getElementById('manualBlockReason');
+      const ip = input.value.trim();
+      const reason = reasonInput.value.trim() || 'Bloqueio manual via formulário';
+      if (!ip) return;
+
+      await blockIP(ip, reason);
+      input.value = '';
+      reasonInput.value = '';
+    }
+
+    async function fetchBlacklist() {
+      try {
+        const res = await fetch('/api/blacklist');
+        if (!res.ok) return;
+        const list = await res.json();
+        const tbody = document.getElementById('blacklistTable');
+        if (!tbody) return;
+
+        if (!list || list.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="4" style="text-align: center; color: var(--text-muted); padding: 18px;">Nenhum IP bloqueado no momento.</td></tr>';
+          return;
+        }
+
+        let html = '';
+        list.forEach(entry => {
+          const dateStr = entry.created_at ? new Date(entry.created_at).toLocaleTimeString() : 'Recentemente';
+          html += '<tr>' +
+            '<td><strong class="mono" style="color: #f87171;"><i class="fa-solid fa-ban" style="font-size: 10px; margin-right: 6px;"></i>' + entry.ip + '</strong></td>' +
+            '<td style="color: var(--text-muted);">' + (entry.reason || 'Bloqueado') + '</td>' +
+            '<td class="mono" style="color: var(--text-muted);">' + dateStr + '</td>' +
+            '<td style="text-align: right;">' +
+              '<button onclick="unblockIP(\'' + entry.ip + '\')" class="btn btn-secondary btn-sm" style="color: #34d399;" title="Desbloquear"><i class="fa-solid fa-shield"></i> Desbloquear</button>' +
+            '</td>' +
+          '</tr>';
+        });
+        tbody.innerHTML = html;
+      } catch (err) {
+        console.error('Fetch blacklist error:', err);
       }
     }
 

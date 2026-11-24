@@ -14,12 +14,15 @@ import (
 	"github.com/WilliamPscheidt/reverse-proxy-go/internal/config"
 	"github.com/WilliamPscheidt/reverse-proxy-go/internal/metrics"
 	"github.com/WilliamPscheidt/reverse-proxy-go/internal/proxy"
+	"github.com/WilliamPscheidt/reverse-proxy-go/internal/security"
 )
 
 func setupTestAdminServer() (*Server, *proxy.L7Server, *proxy.L4Server) {
 	cfg := config.DefaultConfig()
 	m := metrics.NewMetrics()
 	a := analytics.NewAnalytics()
+	bl := security.NewBlacklist(nil)
+	a.SetBlacklistChecker(bl.IsBlocked)
 
 	// L7
 	u1, _ := url.Parse("http://127.0.0.1:8081")
@@ -28,14 +31,16 @@ func setupTestAdminServer() (*Server, *proxy.L7Server, *proxy.L4Server) {
 	bal7, _ := balancer.New("round_robin")
 	l7 := proxy.NewL7Server(cfg.L7, cfg.Timeouts, pool7, bal7, nil, m)
 	l7.SetAnalytics(a)
+	l7.SetBlacklist(bl)
 
 	// L4
 	b2 := proxy.NewBackend(nil, "127.0.0.1:9081", 1)
 	pool4 := proxy.NewBackendPool(b2)
 	bal4, _ := balancer.New("round_robin")
 	l4 := proxy.NewL4Server(cfg.L4, cfg.Timeouts, pool4, bal4, nil, m)
+	l4.SetBlacklist(bl)
 
-	srv := NewServer(cfg, l7, l4, nil, m, a)
+	srv := NewServer(cfg, l7, l4, nil, m, a, bl)
 	return srv, l7, l4
 }
 
@@ -193,6 +198,52 @@ func TestAdmin_Settings(t *testing.T) {
 	data, _ := json.Marshal(payload)
 	req := httptest.NewRequest(http.MethodPost, "/api/settings", bytes.NewReader(data))
 	rec := httptest.NewRecorder()
+	srv.httpServer.Handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d", rec.Code)
+	}
+}
+
+func TestAdmin_Blacklist(t *testing.T) {
+	srv, _, _ := setupTestAdminServer()
+
+	// 1. Block IP
+	payload := map[string]string{
+		"ip":     "198.51.100.22",
+		"reason": "Test block",
+	}
+	data, _ := json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPost, "/api/blacklist", bytes.NewReader(data))
+	rec := httptest.NewRecorder()
+	srv.httpServer.Handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201 Created, got %d", rec.Code)
+	}
+
+	// 2. List blacklist
+	req = httptest.NewRequest(http.MethodGet, "/api/blacklist", nil)
+	rec = httptest.NewRecorder()
+	srv.httpServer.Handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d", rec.Code)
+	}
+
+	var list []security.Entry
+	if err := json.Unmarshal(rec.Body.Bytes(), &list); err != nil {
+		t.Fatalf("failed to decode json: %v", err)
+	}
+	if len(list) != 1 || list[0].IP != "198.51.100.22" {
+		t.Fatalf("expected blacklisted IP in list, got %+v", list)
+	}
+
+	// 3. Unblock IP
+	unblockPayload := map[string]string{"ip": "198.51.100.22"}
+	uData, _ := json.Marshal(unblockPayload)
+	req = httptest.NewRequest(http.MethodDelete, "/api/blacklist", bytes.NewReader(uData))
+	rec = httptest.NewRecorder()
 	srv.httpServer.Handler.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {

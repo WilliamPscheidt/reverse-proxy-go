@@ -15,6 +15,7 @@ import (
 	"github.com/WilliamPscheidt/reverse-proxy-go/internal/metrics"
 	"github.com/WilliamPscheidt/reverse-proxy-go/internal/proxy"
 	"github.com/WilliamPscheidt/reverse-proxy-go/internal/ratelimit"
+	"github.com/WilliamPscheidt/reverse-proxy-go/internal/security"
 )
 
 // Server handles administrative web dashboard and REST API endpoints.
@@ -25,6 +26,7 @@ type Server struct {
 	rateLimiter ratelimit.Limiter
 	metrics     *metrics.Metrics
 	analytics   *analytics.Analytics
+	blacklist   *security.Blacklist
 	httpServer  *http.Server
 	startTime   time.Time
 }
@@ -37,6 +39,7 @@ func NewServer(
 	rl ratelimit.Limiter,
 	m *metrics.Metrics,
 	a *analytics.Analytics,
+	bl *security.Blacklist,
 ) *Server {
 	s := &Server{
 		cfg:         cfg,
@@ -45,6 +48,7 @@ func NewServer(
 		rateLimiter: rl,
 		metrics:     m,
 		analytics:   a,
+		blacklist:   bl,
 		startTime:   time.Now(),
 	}
 
@@ -58,6 +62,7 @@ func NewServer(
 	mux.HandleFunc("/api/status", s.handleAPIStatus)
 	mux.HandleFunc("/api/analytics", s.handleAPIAnalytics)
 	mux.HandleFunc("/api/analytics/reset", s.handleAPIAnalyticsReset)
+	mux.HandleFunc("/api/blacklist", s.handleAPIBlacklist)
 	mux.HandleFunc("/api/settings", s.handleAPISettings)
 	mux.HandleFunc("/api/config", s.handleAPIConfig)
 	mux.HandleFunc("/api/backends", s.handleAPIBackends)
@@ -86,12 +91,13 @@ func (s *Server) Shutdown(ctx context.Context) error {
 
 // StatusResponse is returned by /api/status.
 type StatusResponse struct {
-	Uptime      string               `json:"uptime"`
-	Mode        string               `json:"mode"`
-	RateLimit   RateLimitInfo        `json:"rate_limit"`
-	HealthCheck config.HealthCheckConfig `json:"health_check"`
-	L7          *LayerStatus         `json:"l7,omitempty"`
-	L4          *LayerStatus         `json:"l4,omitempty"`
+	Uptime         string                   `json:"uptime"`
+	Mode           string                   `json:"mode"`
+	BlacklistCount int                      `json:"blacklist_count"`
+	RateLimit      RateLimitInfo            `json:"rate_limit"`
+	HealthCheck    config.HealthCheckConfig `json:"health_check"`
+	L7             *LayerStatus             `json:"l7,omitempty"`
+	L4             *LayerStatus             `json:"l4,omitempty"`
 }
 
 type RateLimitInfo struct {
@@ -139,10 +145,16 @@ func (s *Server) handleAPIStatus(w http.ResponseWriter, r *http.Request) {
 		healthy = s.rateLimiter.IsHealthy()
 	}
 
+	blCount := 0
+	if s.blacklist != nil {
+		blCount = s.blacklist.Count()
+	}
+
 	resp := StatusResponse{
-		Uptime:      uptime,
-		Mode:        s.cfg.Mode,
-		HealthCheck: s.cfg.HealthCheck,
+		Uptime:         uptime,
+		Mode:           s.cfg.Mode,
+		BlacklistCount: blCount,
+		HealthCheck:    s.cfg.HealthCheck,
 		RateLimit: RateLimitInfo{
 			Enabled:   s.cfg.RateLimit.Enabled,
 			Strategy:  strategy,
@@ -463,6 +475,69 @@ func (s *Server) handleAPIAnalyticsReset(w http.ResponseWriter, r *http.Request)
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(map[string]string{"status": "analytics_reset"})
+}
+
+func (s *Server) handleAPIBlacklist(w http.ResponseWriter, r *http.Request) {
+	if s.blacklist == nil {
+		http.Error(w, "blacklist service not available", http.StatusServiceUnavailable)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+
+	switch r.Method {
+	case http.MethodGet:
+		entries := s.blacklist.List()
+		_ = json.NewEncoder(w).Encode(entries)
+
+	case http.MethodPost:
+		var req struct {
+			IP     string `json:"ip"`
+			Reason string `json:"reason"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, fmt.Sprintf("invalid payload: %v", err), http.StatusBadRequest)
+			return
+		}
+		if strings.TrimSpace(req.IP) == "" {
+			http.Error(w, "ip address cannot be empty", http.StatusBadRequest)
+			return
+		}
+
+		entry := s.blacklist.Block(req.IP, req.Reason)
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status": "blocked",
+			"entry":  entry,
+		})
+
+	case http.MethodDelete:
+		var req struct {
+			IP string `json:"ip"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, fmt.Sprintf("invalid payload: %v", err), http.StatusBadRequest)
+			return
+		}
+		if strings.TrimSpace(req.IP) == "" {
+			http.Error(w, "ip address cannot be empty", http.StatusBadRequest)
+			return
+		}
+
+		ok := s.blacklist.Unblock(req.IP)
+		if !ok {
+			http.Error(w, "ip not found in blacklist", http.StatusNotFound)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"status": "unblocked",
+			"ip":     req.IP,
+		})
+
+	default:
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+	}
 }
 
 func (s *Server) handleAPISettings(w http.ResponseWriter, r *http.Request) {
