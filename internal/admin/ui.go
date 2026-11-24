@@ -1648,9 +1648,20 @@ const dashboardHTML = `<!DOCTYPE html>
           </div>
 
           <div class="form-group" style="margin-bottom: 14px;">
-            <label style="display: block; font-size: 12px; margin-bottom: 6px; color: #cbd5e1;">Servidores Upstream (Backends Dedicados)</label>
-            <input type="text" id="routeInputBackends" placeholder="ex: http://127.0.0.1:8085, http://site1.com (vazio = pool padrão)" style="width: 100%;" />
-            <span style="font-size: 11px; color: var(--text-muted); margin-top: 4px; display: block;">Insira URLs completas separadas por vírgula. Se deixar em branco, usará a pool padrão L7.</span>
+            <label style="display: block; font-size: 12px; margin-bottom: 6px; color: #cbd5e1;">Servidor Upstream de Destino</label>
+            <select id="routeSelectTarget" onchange="onRouteTargetChange()" style="width: 100%; background: var(--bg-dark); border: 1px solid var(--border); border-radius: 6px; color: #fff; padding: 8px 12px; font-size: 13px;">
+              <option value="__DEFAULT__">🌐 Pool Padrão L7 (Balanceamento automático entre servidores primários)</option>
+              <option value="__CANARY__">🐤 Pool Canary Isolada (:8084)</option>
+              <optgroup id="routeSelectBackendsGroup" label="Servidores Upstream Cadastrados">
+                <!-- Preenchido dinamicamente com os nós reais -->
+              </optgroup>
+              <option value="__CUSTOM__">🔗 Digitar Outra URL Customizada / Externa...</option>
+            </select>
+
+            <div id="routeCustomBackendContainer" style="display: none; margin-top: 8px;">
+              <input type="text" id="routeInputBackends" placeholder="ex: http://site1.com ou http://192.168.1.50:8080" style="width: 100%;" />
+              <span style="font-size: 11px; color: var(--text-muted); margin-top: 4px; display: block;">Insira uma ou mais URLs separadas por vírgula para roteamento externo.</span>
+            </div>
           </div>
 
           <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 16px;">
@@ -1695,6 +1706,7 @@ const dashboardHTML = `<!DOCTYPE html>
     let vectorMap = null;
     let activeGeoLocations = [];
     let currentModalRegion = null;
+    let cachedBackendsList = [];
 
     function initMap() {
       if (vectorMap) return;
@@ -1983,6 +1995,7 @@ const dashboardHTML = `<!DOCTYPE html>
         const res = await fetch('/api/backends');
         if (!res.ok) return;
         const list = await res.json();
+        cachedBackendsList = list || [];
         const tbody = document.getElementById('backendsTable');
         document.getElementById('nodesCount').innerText = 'Total: ' + (list ? list.length : 0);
 
@@ -2521,6 +2534,32 @@ const dashboardHTML = `<!DOCTYPE html>
       } catch (err) {}
     }
 
+    function populateRouteTargetOptions() {
+      const group = document.getElementById('routeSelectBackendsGroup');
+      if (!group) return;
+      if (cachedBackendsList && cachedBackendsList.length > 0) {
+        const l7Nodes = cachedBackendsList.filter(b => b.type && b.type.startsWith('l7'));
+        group.innerHTML = l7Nodes.map(b => {
+          const isCanary = b.type.includes('canary');
+          const tag = isCanary ? '🐤 Canary' : (b.alive ? 'Online' : 'Offline');
+          return '<option value="' + b.target + '">🖥️ ' + b.target + ' (' + tag + ')</option>';
+        }).join('');
+      } else {
+        group.innerHTML = '<option disabled>Nenhum servidor upstream L7 online</option>';
+      }
+    }
+
+    function onRouteTargetChange() {
+      const val = document.getElementById('routeSelectTarget').value;
+      const customDiv = document.getElementById('routeCustomBackendContainer');
+      if (val === '__CUSTOM__') {
+        customDiv.style.display = 'block';
+        document.getElementById('routeInputBackends').focus();
+      } else {
+        customDiv.style.display = 'none';
+      }
+    }
+
     function openRouteModal() {
       document.getElementById('routeModalTitle').innerText = 'Nova Rota L7';
       document.getElementById('routeInputId').value = '';
@@ -2529,6 +2568,9 @@ const dashboardHTML = `<!DOCTYPE html>
       document.getElementById('routeInputPath').value = '/';
       document.getElementById('routeInputRewrite').value = '';
       document.getElementById('routeCheckStripPrefix').checked = false;
+      populateRouteTargetOptions();
+      document.getElementById('routeSelectTarget').value = '__DEFAULT__';
+      document.getElementById('routeCustomBackendContainer').style.display = 'none';
       document.getElementById('routeInputBackends').value = '';
       document.getElementById('routeInputMethods').value = '';
       document.getElementById('routeCheckPreserveHost').checked = false;
@@ -2547,7 +2589,38 @@ const dashboardHTML = `<!DOCTYPE html>
       document.getElementById('routeInputPath').value = cfg.path_prefix || '/';
       document.getElementById('routeInputRewrite').value = cfg.rewrite_prefix || '';
       document.getElementById('routeCheckStripPrefix').checked = !!cfg.strip_prefix;
-      document.getElementById('routeInputBackends').value = (cfg.backends && cfg.backends.length) ? cfg.backends.join(', ') : '';
+      populateRouteTargetOptions();
+
+      const sel = document.getElementById('routeSelectTarget');
+      const customDiv = document.getElementById('routeCustomBackendContainer');
+      if (cfg.backends && cfg.backends.length === 1) {
+        const target = cfg.backends[0];
+        let hasOption = false;
+        for (let i = 0; i < sel.options.length; i++) {
+          if (sel.options[i].value === target) {
+            sel.selectedIndex = i;
+            hasOption = true;
+            break;
+          }
+        }
+        if (hasOption) {
+          customDiv.style.display = 'none';
+          document.getElementById('routeInputBackends').value = '';
+        } else {
+          sel.value = '__CUSTOM__';
+          customDiv.style.display = 'block';
+          document.getElementById('routeInputBackends').value = target;
+        }
+      } else if (cfg.backends && cfg.backends.length > 1) {
+        sel.value = '__CUSTOM__';
+        customDiv.style.display = 'block';
+        document.getElementById('routeInputBackends').value = cfg.backends.join(', ');
+      } else {
+        sel.value = '__DEFAULT__';
+        customDiv.style.display = 'none';
+        document.getElementById('routeInputBackends').value = '';
+      }
+
       document.getElementById('routeInputMethods').value = (cfg.methods && cfg.methods.length) ? cfg.methods.join(', ') : '';
       document.getElementById('routeCheckPreserveHost').checked = !!cfg.preserve_host;
       document.getElementById('routeInputCanary').value = cfg.canary_weight || 0;
@@ -2569,15 +2642,27 @@ const dashboardHTML = `<!DOCTYPE html>
       const pathPrefix = document.getElementById('routeInputPath').value.trim() || '/';
       const rewritePrefix = document.getElementById('routeInputRewrite').value.trim();
       const stripPrefix = document.getElementById('routeCheckStripPrefix').checked;
+      const targetChoice = document.getElementById('routeSelectTarget').value;
       const rawBackends = document.getElementById('routeInputBackends').value.trim();
       const rawMethods = document.getElementById('routeInputMethods').value.trim();
       const preserveHost = document.getElementById('routeCheckPreserveHost').checked;
-      const canaryWeight = parseInt(document.getElementById('routeInputCanary').value, 10) || 0;
+      let canaryWeight = parseInt(document.getElementById('routeInputCanary').value, 10) || 0;
 
       let backends = [];
-      if (rawBackends) {
-        backends = rawBackends.split(',').map(s => s.trim()).filter(s => s.length > 0);
+      if (targetChoice === '__DEFAULT__') {
+        backends = [];
+      } else if (targetChoice === '__CANARY__') {
+        backends = [];
+        if (canaryWeight === 0) canaryWeight = 100;
+      } else if (targetChoice === '__CUSTOM__') {
+        if (rawBackends) {
+          backends = rawBackends.split(',').map(s => s.trim()).filter(s => s.length > 0);
+        }
+      } else {
+        // A specific registered upstream server was chosen directly from the dropdown!
+        backends = [targetChoice];
       }
+
       let methods = [];
       if (rawMethods && rawMethods.toUpperCase() !== 'ALL') {
         methods = rawMethods.split(',').map(s => s.trim().toUpperCase()).filter(s => s.length > 0);
@@ -2602,7 +2687,7 @@ const dashboardHTML = `<!DOCTYPE html>
           body: JSON.stringify(payload)
         });
         if (res.ok) {
-          showToast('Rota "' + id + '" salva com sucesso!');
+          showToast('Rota "' + id + '" configurada com sucesso!');
           closeRouteModal();
           fetchRoutes();
         } else {
