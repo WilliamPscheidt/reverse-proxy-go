@@ -112,7 +112,7 @@ O proxy disponibiliza uma interface visual administrativa integrada e estilizada
 
 - **Sidebar de Navegação Dinâmica**:
   - **Visão Geral / Tráfego (Homepage)**: Cards com métricas temporais em janelas deslizantes (**último minuto**, **última hora**, **últimas 24 horas**), total de bloqueios HTTP 429, barras de distribuição de status HTTP (2xx, 429, 5xx) e tabela dos principais IPs de origem.
-  - **Mapa Geográfico Interativo**: Visualização em mapa escuro (*Leaflet.js + CartoDB Dark Matter*) exibindo em tempo real a origem geográfica das requisições e a concentração de tráfego por região.
+  - **Mapa Geográfico Interativo**: Visualização em mapa vetorial escuro (*SVG Vector Map / jsVectorMap*) exibindo em tempo real a origem geográfica das requisições e a concentração de tráfego por região, 100% livre de API keys, sem servidores de tiles e sem marcas d'água.
   - **Servidores Upstream**: Monitoramento de nós com métricas de conexões ativas, volume de requisições, falhas/sucessos de health check, dreno manual e cadastro dinâmico de novos backends HTTP (L7) e TCP (L4).
   - **Algoritmos de Balanceamento**: Hot-swap com um clique entre *Round-Robin* (atômico), *Least Connections* e *IP Hash* (sticky sessions).
   - **Rate Limit & Redis**: Monitoramento da saúde do cluster Redis, indicação de fallback atômico in-memory e ajuste em tempo real de taxas de reabastecimento (*rate req/s*) e rajadas (*burst*).
@@ -184,7 +184,7 @@ k6 run --vus 100 --duration 30s benchmark.js
 │   ├── docker-config.yaml  # Configuração para containers
 │   └── prometheus.yml      # Configuração de coleta do Prometheus
 ├── internal/
-│   ├── admin/              # Console Web SPA, Leaflet dark map e API REST
+│   ├── admin/              # Console Web SPA, SVG Vector Map e API REST
 │   ├── analytics/          # Janelas deslizantes (min/hora/dia), GeoIP e Top IPs
 │   ├── balancer/           # Algoritmos Round-Robin, Least Connections e IP Hash
 │   ├── health/             # Health check ativo em background

@@ -24,8 +24,10 @@ const dashboardHTML = `<!DOCTYPE html>
   <!-- FontAwesome 6 -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" integrity="sha512-DTOQO9RWCH3ppGqcWaEA1BIZOC6xxalwEsw9c2QQeAIftl+Vegovlnee1c9QX4TctnWMn13TZye+giMm8e2LwA==" crossorigin="anonymous" referrerpolicy="no-referrer" />
 
-  <!-- Leaflet Maps CSS -->
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
+  <!-- jsVectorMap (100% Free SVG Vector Map, Zero API Keys, Zero Watermarks) -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/jsvectormap/dist/css/jsvectormap.min.css" />
+  <script src="https://cdn.jsdelivr.net/npm/jsvectormap"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jsvectormap/dist/maps/world.js"></script>
 
   <style>
     :root {
@@ -369,10 +371,40 @@ const dashboardHTML = `<!DOCTYPE html>
 
     /* Map Box */
     #worldMap {
-      height: 320px;
+      height: 330px;
       width: 100%;
       border-radius: 6px;
       background: #0d121f;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .jvm-tooltip {
+      background: #111827 !important;
+      border: 1px solid #374151 !important;
+      border-radius: 6px !important;
+      color: #f3f4f6 !important;
+      font-size: 12px !important;
+      padding: 6px 12px !important;
+      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.5) !important;
+      z-index: 1000 !important;
+    }
+
+    .jvm-zoom-btn {
+      background-color: #1f2937 !important;
+      border: 1px solid #374151 !important;
+      border-radius: 4px !important;
+      color: #9ca3af !important;
+      display: flex !important;
+      align-items: center !important;
+      justify-content: center !important;
+      font-weight: bold !important;
+      transition: all 0.15s ease !important;
+    }
+
+    .jvm-zoom-btn:hover {
+      background-color: #374151 !important;
+      color: #fff !important;
     }
 
     /* Tables */
@@ -982,56 +1014,90 @@ const dashboardHTML = `<!DOCTYPE html>
     <span id="toastMsg">Mensagem</span>
   </div>
 
-  <!-- Leaflet Maps JS -->
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
-
   <script>
-    let map = null;
-    let mapMarkers = [];
+    let vectorMap = null;
 
     function initMap() {
-      if (map) return;
-      map = L.map('worldMap', {
-        center: [20, 0],
-        zoom: 2,
-        minZoom: 1,
-        maxZoom: 6,
-        attributionControl: false
-      });
+      if (vectorMap) return;
+      if (typeof jsVectorMap === 'undefined') return;
 
-      // CartoDB Dark Matter tiles
-      L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-        maxZoom: 19,
-        subdomains: 'abcd'
-      }).addTo(map);
+      try {
+        vectorMap = new jsVectorMap({
+          selector: '#worldMap',
+          map: 'world',
+          backgroundColor: '#0d121f',
+          draggable: true,
+          zoomButtons: true,
+          zoomOnScroll: false,
+          regionStyle: {
+            initial: {
+              fill: '#1e293b',
+              fillOpacity: 1,
+              stroke: '#334155',
+              strokeWidth: 0.5
+            },
+            hover: {
+              fill: '#2563eb',
+              fillOpacity: 0.85
+            }
+          },
+          markerStyle: {
+            initial: {
+              r: 6,
+              fill: '#3b82f6',
+              stroke: '#93c5fd',
+              strokeWidth: 2,
+              fillOpacity: 0.95
+            },
+            hover: {
+              fill: '#60a5fa',
+              stroke: '#ffffff',
+              strokeWidth: 3,
+              cursor: 'pointer'
+            }
+          },
+          markers: [],
+          onMarkerTooltipShow: function(event, tooltip, index) {
+            const m = vectorMap.params.markers[index];
+            if (m) {
+              tooltip.text(
+                '<div style="font-weight: 600; color: #fff; margin-bottom: 3px;">' + m.name + '</div>' +
+                '<div style="font-size: 11px; color: #9ca3af;">Volume: <strong style="color: #60a5fa;">' + 
+                (m.count || 0).toLocaleString() + '</strong> requisições</div>',
+                true
+              );
+            }
+          }
+        });
+      } catch (err) {
+        console.error('jsVectorMap init error:', err);
+      }
     }
 
     function updateMapMarkers(geoList) {
-      if (!map) initMap();
+      if (!vectorMap) initMap();
+      if (!vectorMap) return;
 
-      mapMarkers.forEach(m => map.removeLayer(m));
-      mapMarkers = [];
+      try {
+        vectorMap.removeMarkers();
 
-      if (!geoList) return;
+        if (!geoList || geoList.length === 0) return;
 
-      geoList.forEach(g => {
-        const marker = L.circleMarker([g.lat, g.lng], {
-          radius: Math.max(6, Math.min(22, 6 + Math.log2(g.count + 1) * 3)),
-          fillColor: '#3b82f6',
-          color: '#60a5fa',
-          weight: 2,
-          opacity: 0.9,
-          fillOpacity: 0.5
-        }).addTo(map);
+        const markers = geoList.map(g => ({
+          name: g.city + ', ' + g.country,
+          coords: [g.lat, g.lng],
+          count: g.count,
+          style: {
+            r: Math.max(5, Math.min(16, 5 + Math.log2(g.count + 1) * 2.2)),
+            fill: g.count > 0 ? '#3b82f6' : '#64748b',
+            stroke: g.count > 0 ? '#93c5fd' : '#475569'
+          }
+        }));
 
-        marker.bindPopup(
-          '<div style="color: #111; font-size: 12px;">' +
-            '<strong>' + g.city + ', ' + g.country + '</strong><br>' +
-            'Volume: ' + g.count.toLocaleString() + ' requisições' +
-          '</div>'
-        );
-        mapMarkers.push(marker);
-      });
+        vectorMap.addMarkers(markers);
+      } catch (err) {
+        console.error('Update map error:', err);
+      }
     }
 
     function switchTab(tabId) {
@@ -1062,8 +1128,8 @@ const dashboardHTML = `<!DOCTYPE html>
         }
       });
 
-      if (tabId === 'overview' && map) {
-        setTimeout(() => { map.invalidateSize(); }, 200);
+      if (tabId === 'overview' && vectorMap && vectorMap.updateSize) {
+        setTimeout(() => { vectorMap.updateSize(); }, 200);
       }
     }
 
@@ -1152,7 +1218,7 @@ const dashboardHTML = `<!DOCTYPE html>
             topTbody.innerHTML = '<tr><td colspan="3" style="text-align: center; color: var(--text-muted); padding: 16px;">Sem tráfego registrado.</td></tr>';
           }
 
-          // Update Leaflet Map
+          // Update Vector Map
           if (a.geo_locations) {
             updateMapMarkers(a.geo_locations);
           }
