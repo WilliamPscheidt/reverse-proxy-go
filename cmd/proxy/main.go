@@ -252,10 +252,12 @@ func main() {
 			routePrimary := any(l7Pool)
 			routeCanary := any(targetCanary)
 
+			var backendURLs []string
 			// If route specifies dedicated backends, instantiate dedicated BackendPool
 			if len(r.Backends) > 0 {
 				routePool := proxy.NewBackendPool()
 				for _, b := range r.Backends {
+					backendURLs = append(backendURLs, b.URL)
 					u := proxy.ParseURL(b.URL)
 					if u != nil {
 						backend := proxy.NewBackend(u, u.Host, b.Weight)
@@ -284,6 +286,7 @@ func main() {
 				Methods:       r.Methods,
 				CanaryWeight:  r.CanaryWeight,
 				PreserveHost:  r.PreserveHost,
+				Backends:      backendURLs,
 			}, routePrimary, routeCanary)
 		}
 	} else if l7Pool != nil {

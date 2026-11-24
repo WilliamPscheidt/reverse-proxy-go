@@ -1428,8 +1428,11 @@ const dashboardHTML = `<!DOCTYPE html>
         </div>
 
         <div class="section-box">
-          <div class="section-header">
-            <div class="section-title"><i class="fa-solid fa-route" style="color: #a78bfa;"></i> Rotas L7 Ativas</div>
+          <div class="section-header" style="display: flex; justify-content: space-between; align-items: center;">
+            <div class="section-title"><i class="fa-solid fa-route" style="color: #a78bfa;"></i> Rotas L7, Virtual Hosts & Reescritas</div>
+            <button onclick="openRouteModal()" class="btn" style="background: #2563eb; color: #fff; padding: 6px 14px; font-size: 13px; display: inline-flex; align-items: center; gap: 8px; border: none; cursor: pointer; border-radius: 6px; font-weight: 500;">
+              <i class="fa-solid fa-plus"></i> Nova Rota
+            </button>
           </div>
           <div class="table-wrapper">
             <table>
@@ -1437,15 +1440,17 @@ const dashboardHTML = `<!DOCTYPE html>
                 <tr>
                   <th>ID da Rota</th>
                   <th>Host / VirtualHost</th>
-                  <th>Prefixo do Caminho</th>
+                  <th>Caminho / Reescrita</th>
+                  <th>Destino Upstream</th>
                   <th>Métodos</th>
-                  <th>Canary Weight</th>
+                  <th>Canary</th>
                   <th>Total Hits</th>
                   <th>Canary Hits</th>
+                  <th style="text-align: right;">Ações</th>
                 </tr>
               </thead>
               <tbody id="routesTableBody">
-                <tr><td colspan="7" style="text-align: center; color: var(--text-muted); padding: 20px;">Carregando rotas...</td></tr>
+                <tr><td colspan="9" style="text-align: center; color: var(--text-muted); padding: 20px;">Carregando rotas...</td></tr>
               </tbody>
             </table>
           </div>
@@ -1598,6 +1603,85 @@ const dashboardHTML = `<!DOCTYPE html>
             </tbody>
           </table>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Route Configuration Modal -->
+  <div id="routeModal" class="modal-backdrop" style="display: none;" onclick="closeRouteModalOnBackdrop(event)">
+    <div class="modal-card" style="max-width: 620px;">
+      <div class="modal-header">
+        <div style="display: flex; align-items: center; gap: 12px;">
+          <div style="width: 34px; height: 34px; background: rgba(99, 102, 241, 0.15); border: 1px solid rgba(129, 140, 248, 0.3); border-radius: 8px; display: flex; align-items: center; justify-content: center;">
+            <i class="fa-solid fa-route" style="color: #a78bfa; font-size: 16px;"></i>
+          </div>
+          <div>
+            <div style="font-size: 15px; font-weight: 600; color: #fff;" id="routeModalTitle">Configurar Rota L7</div>
+            <div style="font-size: 11px; color: var(--text-muted);">Virtual Hosts, Subdomínios, Reescritas & Backends</div>
+          </div>
+        </div>
+        <button onclick="closeRouteModal()" class="btn-close" title="Fechar"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+
+      <div class="modal-body">
+        <form id="routeForm" onsubmit="saveRouteForm(event)">
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 14px;">
+            <div class="form-group">
+              <label style="display: block; font-size: 12px; margin-bottom: 6px; color: #cbd5e1;">ID da Rota <span style="color: #ef4444;">*</span></label>
+              <input type="text" id="routeInputId" placeholder="ex: api-servico, vhost-site1" required style="width: 100%;" />
+            </div>
+            <div class="form-group">
+              <label style="display: block; font-size: 12px; margin-bottom: 6px; color: #cbd5e1;">Host / Subdomínio</label>
+              <input type="text" id="routeInputHost" placeholder="ex: subdominio.blabla.com, *.blabla.com ou *" value="*" style="width: 100%;" />
+            </div>
+          </div>
+
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 14px;">
+            <div class="form-group">
+              <label style="display: block; font-size: 12px; margin-bottom: 6px; color: #cbd5e1;">Prefixo de Entrada (Path)</label>
+              <input type="text" id="routeInputPath" placeholder="ex: /teste, /api ou /" value="/" required style="width: 100%;" />
+            </div>
+            <div class="form-group">
+              <label style="display: block; font-size: 12px; margin-bottom: 6px; color: #cbd5e1;">Reescrever para (Rewrite Prefix)</label>
+              <input type="text" id="routeInputRewrite" placeholder="ex: /sitenovo (opcional)" style="width: 100%;" />
+            </div>
+          </div>
+
+          <div class="form-group" style="margin-bottom: 14px;">
+            <label style="display: block; font-size: 12px; margin-bottom: 6px; color: #cbd5e1;">Servidores Upstream (Backends Dedicados)</label>
+            <input type="text" id="routeInputBackends" placeholder="ex: http://127.0.0.1:8085, http://site1.com (vazio = pool padrão)" style="width: 100%;" />
+            <span style="font-size: 11px; color: var(--text-muted); margin-top: 4px; display: block;">Insira URLs completas separadas por vírgula. Se deixar em branco, usará a pool padrão L7.</span>
+          </div>
+
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 16px;">
+            <div class="form-group">
+              <label style="display: block; font-size: 12px; margin-bottom: 6px; color: #cbd5e1;">Métodos HTTP Permitidos</label>
+              <input type="text" id="routeInputMethods" placeholder="ex: GET, POST (vazio = ALL)" style="width: 100%;" />
+            </div>
+            <div class="form-group">
+              <label style="display: block; font-size: 12px; margin-bottom: 6px; color: #cbd5e1;">Canary Weight (0% a 100%)</label>
+              <input type="number" id="routeInputCanary" min="0" max="100" value="0" style="width: 100%;" />
+            </div>
+          </div>
+
+          <div style="background: rgba(15, 23, 42, 0.6); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; margin-bottom: 18px; display: flex; flex-direction: column; gap: 10px;">
+            <label style="display: flex; align-items: center; gap: 10px; cursor: pointer; font-size: 12px; color: #e2e8f0;">
+              <input type="checkbox" id="routeCheckStripPrefix" style="cursor: pointer;" />
+              <span><strong>Remover Prefixo (Strip Prefix)</strong> — Remove o prefixo de entrada ao encaminhar (ex: /teste/algo vira /algo)</span>
+            </label>
+            <label style="display: flex; align-items: center; gap: 10px; cursor: pointer; font-size: 12px; color: #e2e8f0;">
+              <input type="checkbox" id="routeCheckPreserveHost" style="cursor: pointer;" />
+              <span><strong>Preservar Cabeçalho Host Original</strong> — Mantém o Host do cliente (desmarcado reescreve para o host do backend)</span>
+            </label>
+          </div>
+
+          <div style="display: flex; justify-content: flex-end; gap: 10px;">
+            <button type="button" onclick="closeRouteModal()" class="btn btn-secondary" style="padding: 8px 16px;">Cancelar</button>
+            <button type="submit" class="btn" style="background: #2563eb; color: #fff; padding: 8px 20px; font-weight: 600; display: inline-flex; align-items: center; gap: 8px;">
+              <i class="fa-solid fa-floppy-disk"></i> Salvar Rota
+            </button>
+          </div>
+        </form>
       </div>
     </div>
   </div>
@@ -2389,29 +2473,162 @@ const dashboardHTML = `<!DOCTYPE html>
     }
 
     /* --- Routes & Canary Logic --- */
+    let cachedRoutes = [];
+
     async function fetchRoutes() {
       try {
         const res = await fetch('/api/routes');
         if (!res.ok) return;
-        const routes = await res.json();
+        cachedRoutes = await res.json();
         const tbody = document.getElementById('routesTableBody');
         if (!tbody) return;
-        if (!routes || routes.length === 0) {
-          tbody.innerHTML = '<tr><td colspan="7" style="text-align: center; color: var(--text-muted); padding: 20px;">Nenhuma rota customizada. Tráfego direcionado à pool padrão L7.</td></tr>';
+        if (!cachedRoutes || cachedRoutes.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="9" style="text-align: center; color: var(--text-muted); padding: 20px;">Nenhuma rota customizada. Tráfego direcionado à pool padrão L7.</td></tr>';
           return;
         }
-        tbody.innerHTML = routes.map(r => 
-          '<tr>' +
-            '<td class="mono" style="font-weight: 600; color: #fff;">' + r.config.id + '</td>' +
-            '<td class="mono">' + (r.config.host || '*') + '</td>' +
-            '<td class="mono" style="color: #60a5fa;">' + r.config.path_prefix + (r.config.rewrite_prefix ? ' <span style="color: #a78bfa; font-size: 11px;">➔ ' + r.config.rewrite_prefix + '</span>' : '') + (r.config.strip_prefix ? ' <span style="color: #f59e0b; font-size: 11px;">[strip]</span>' : '') + '</td>' +
-            '<td>' + ((r.config.methods && r.config.methods.length) ? r.config.methods.join(', ') : 'ALL') + '</td>' +
-            '<td><span class="badge" style="background: rgba(16, 185, 129, 0.15); color: #34d399; font-weight: 600;">' + r.config.canary_weight + '%</span></td>' +
+        tbody.innerHTML = cachedRoutes.map(r => {
+          const cfg = r.config;
+          const hostDisplay = (cfg.host && cfg.host !== '*') ? '<span class="badge" style="background: rgba(99, 102, 241, 0.15); color: #818cf8; font-weight: 600;">' + cfg.host + '</span>' : '<span style="color: var(--text-muted);">* (qualquer)</span>';
+          let pathDisplay = '<span class="mono" style="color: #60a5fa; font-weight: 600;">' + (cfg.path_prefix || '/') + '</span>';
+          if (cfg.rewrite_prefix) {
+            pathDisplay += ' <span style="color: #a78bfa; font-size: 11px; font-weight: 500;">➔ ' + cfg.rewrite_prefix + '</span>';
+          }
+          if (cfg.strip_prefix) {
+            pathDisplay += ' <span class="badge" style="background: rgba(245, 158, 11, 0.15); color: #fbbf24; font-size: 10px; margin-left: 4px;">strip</span>';
+          }
+          let destDisplay = '<span style="color: var(--text-muted); font-size: 12px;">Pool Padrão L7</span>';
+          if (cfg.backends && cfg.backends.length) {
+            destDisplay = '<span class="mono" style="color: #34d399; font-size: 12px; font-weight: 500;">' + cfg.backends.join(', ') + '</span>';
+          }
+          const methodsDisplay = (cfg.methods && cfg.methods.length) ? cfg.methods.join(', ') : 'ALL';
+          const canaryDisplay = '<span class="badge" style="background: rgba(16, 185, 129, 0.15); color: #34d399; font-weight: 600;">' + (cfg.canary_weight || 0) + '%</span>';
+
+          return '<tr>' +
+            '<td class="mono" style="font-weight: 600; color: #fff;">' + cfg.id + '</td>' +
+            '<td class="mono">' + hostDisplay + '</td>' +
+            '<td>' + pathDisplay + '</td>' +
+            '<td>' + destDisplay + '</td>' +
+            '<td><span style="font-size: 12px;">' + methodsDisplay + '</span></td>' +
+            '<td>' + canaryDisplay + '</td>' +
             '<td class="mono">' + (r.total_hits || 0) + '</td>' +
             '<td class="mono" style="color: #34d399;">' + (r.canary_hits || 0) + '</td>' +
-          '</tr>'
-        ).join('');
+            '<td style="text-align: right; white-space: nowrap;">' +
+              '<button onclick="editRouteModal(\'' + cfg.id + '\')" class="btn btn-secondary btn-sm" title="Editar Rota" style="padding: 4px 8px; font-size: 11px; margin-right: 6px;"><i class="fa-solid fa-pen"></i></button>' +
+              '<button onclick="deleteRouteConfirm(\'' + cfg.id + '\')" class="btn btn-danger btn-sm" title="Excluir Rota" style="padding: 4px 8px; font-size: 11px;"><i class="fa-solid fa-trash"></i></button>' +
+            '</td>' +
+          '</tr>';
+        }).join('');
       } catch (err) {}
+    }
+
+    function openRouteModal() {
+      document.getElementById('routeModalTitle').innerText = 'Nova Rota L7';
+      document.getElementById('routeInputId').value = '';
+      document.getElementById('routeInputId').disabled = false;
+      document.getElementById('routeInputHost').value = '*';
+      document.getElementById('routeInputPath').value = '/';
+      document.getElementById('routeInputRewrite').value = '';
+      document.getElementById('routeCheckStripPrefix').checked = false;
+      document.getElementById('routeInputBackends').value = '';
+      document.getElementById('routeInputMethods').value = '';
+      document.getElementById('routeCheckPreserveHost').checked = false;
+      document.getElementById('routeInputCanary').value = '0';
+      document.getElementById('routeModal').style.display = 'flex';
+    }
+
+    function editRouteModal(id) {
+      const route = cachedRoutes.find(r => r.config.id === id);
+      if (!route) return;
+      const cfg = route.config;
+      document.getElementById('routeModalTitle').innerText = 'Editar Rota: ' + cfg.id;
+      document.getElementById('routeInputId').value = cfg.id;
+      document.getElementById('routeInputId').disabled = true;
+      document.getElementById('routeInputHost').value = cfg.host || '*';
+      document.getElementById('routeInputPath').value = cfg.path_prefix || '/';
+      document.getElementById('routeInputRewrite').value = cfg.rewrite_prefix || '';
+      document.getElementById('routeCheckStripPrefix').checked = !!cfg.strip_prefix;
+      document.getElementById('routeInputBackends').value = (cfg.backends && cfg.backends.length) ? cfg.backends.join(', ') : '';
+      document.getElementById('routeInputMethods').value = (cfg.methods && cfg.methods.length) ? cfg.methods.join(', ') : '';
+      document.getElementById('routeCheckPreserveHost').checked = !!cfg.preserve_host;
+      document.getElementById('routeInputCanary').value = cfg.canary_weight || 0;
+      document.getElementById('routeModal').style.display = 'flex';
+    }
+
+    function closeRouteModal() {
+      document.getElementById('routeModal').style.display = 'none';
+    }
+
+    function closeRouteModalOnBackdrop(e) {
+      if (e.target && e.target.id === 'routeModal') closeRouteModal();
+    }
+
+    async function saveRouteForm(e) {
+      e.preventDefault();
+      const id = document.getElementById('routeInputId').value.trim();
+      const host = document.getElementById('routeInputHost').value.trim() || '*';
+      const pathPrefix = document.getElementById('routeInputPath').value.trim() || '/';
+      const rewritePrefix = document.getElementById('routeInputRewrite').value.trim();
+      const stripPrefix = document.getElementById('routeCheckStripPrefix').checked;
+      const rawBackends = document.getElementById('routeInputBackends').value.trim();
+      const rawMethods = document.getElementById('routeInputMethods').value.trim();
+      const preserveHost = document.getElementById('routeCheckPreserveHost').checked;
+      const canaryWeight = parseInt(document.getElementById('routeInputCanary').value, 10) || 0;
+
+      let backends = [];
+      if (rawBackends) {
+        backends = rawBackends.split(',').map(s => s.trim()).filter(s => s.length > 0);
+      }
+      let methods = [];
+      if (rawMethods && rawMethods.toUpperCase() !== 'ALL') {
+        methods = rawMethods.split(',').map(s => s.trim().toUpperCase()).filter(s => s.length > 0);
+      }
+
+      const payload = {
+        id: id,
+        host: host,
+        path_prefix: pathPrefix,
+        rewrite_prefix: rewritePrefix,
+        strip_prefix: stripPrefix,
+        backends: backends,
+        methods: methods,
+        preserve_host: preserveHost,
+        canary_weight: canaryWeight
+      };
+
+      try {
+        const res = await fetch('/api/routes', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        if (res.ok) {
+          showToast('Rota "' + id + '" salva com sucesso!');
+          closeRouteModal();
+          fetchRoutes();
+        } else {
+          const errText = await res.text();
+          showToast('Erro ao salvar rota: ' + errText, true);
+        }
+      } catch (err) {
+        showToast('Erro de conexão ao salvar rota', true);
+      }
+    }
+
+    async function deleteRouteConfirm(id) {
+      if (!confirm('Deseja realmente excluir a rota "' + id + '"?')) return;
+      try {
+        const res = await fetch('/api/routes?id=' + encodeURIComponent(id), {
+          method: 'DELETE'
+        });
+        if (res.ok) {
+          showToast('Rota "' + id + '" excluída!');
+          fetchRoutes();
+        } else {
+          showToast('Erro ao excluir rota', true);
+        }
+      } catch (err) {
+        showToast('Erro de conexão ao excluir rota', true);
+      }
     }
 
     function updateCanaryDisplay(val) {

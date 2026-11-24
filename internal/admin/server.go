@@ -94,6 +94,7 @@ func NewServer(
 	mux.HandleFunc("/api/cache", s.handleAPICache)
 	mux.HandleFunc("/api/cache/purge", s.handleAPICachePurge)
 	mux.HandleFunc("/api/routes", s.handleAPIRoutes)
+	mux.HandleFunc("/api/routes/delete", s.handleAPIRoutesDelete)
 	mux.HandleFunc("/api/routes/canary", s.handleAPIRoutesCanary)
 	mux.HandleFunc("/api/circuit-breakers", s.handleAPICircuitBreakers)
 
@@ -712,7 +713,102 @@ func (s *Server) handleAPIRoutes(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode([]any{})
 		return
 	}
+
+	if r.Method == http.MethodPost {
+		var req struct {
+			ID            string   `json:"id"`
+			Host          string   `json:"host"`
+			PathPrefix    string   `json:"path_prefix"`
+			RewritePrefix string   `json:"rewrite_prefix"`
+			StripPrefix   bool     `json:"strip_prefix"`
+			Methods       []string `json:"methods"`
+			CanaryWeight  int      `json:"canary_weight"`
+			PreserveHost  bool     `json:"preserve_host"`
+			Backends      []string `json:"backends"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "Invalid JSON payload: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		req.ID = strings.TrimSpace(req.ID)
+		if req.ID == "" {
+			http.Error(w, "Route ID cannot be empty", http.StatusBadRequest)
+			return
+		}
+		if req.Host == "" {
+			req.Host = "*"
+		}
+		if req.PathPrefix == "" {
+			req.PathPrefix = "/"
+		}
+		if req.CanaryWeight < 0 {
+			req.CanaryWeight = 0
+		} else if req.CanaryWeight > 100 {
+			req.CanaryWeight = 100
+		}
+
+		var primaryPool any
+		var canaryPool any
+		if s.l7Server != nil {
+			if len(req.Backends) > 0 {
+				primaryPool = s.l7Server.CreateRoutePool(req.Backends)
+			} else {
+				primaryPool = s.l7Server.GetPool()
+			}
+			canaryPool = s.l7Server.GetCanaryPool()
+		}
+
+		route := s.router.AddRoute(routing.RouteConfig{
+			ID:            req.ID,
+			Host:          req.Host,
+			PathPrefix:    req.PathPrefix,
+			RewritePrefix: req.RewritePrefix,
+			StripPrefix:   req.StripPrefix,
+			Methods:       req.Methods,
+			CanaryWeight:  req.CanaryWeight,
+			PreserveHost:  req.PreserveHost,
+			Backends:      req.Backends,
+		}, primaryPool, canaryPool)
+
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status": "saved",
+			"route":  route.Config,
+		})
+		return
+	}
+
+	if r.Method == http.MethodDelete {
+		s.handleAPIRoutesDelete(w, r)
+		return
+	}
+
 	_ = json.NewEncoder(w).Encode(s.router.ListRoutes())
+}
+
+func (s *Server) handleAPIRoutesDelete(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	if s.router == nil {
+		http.Error(w, "Router not enabled", http.StatusBadRequest)
+		return
+	}
+	id := strings.TrimSpace(r.URL.Query().Get("id"))
+	if id == "" {
+		var body struct {
+			ID string `json:"id"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		id = strings.TrimSpace(body.ID)
+	}
+	if id == "" {
+		http.Error(w, "Route ID required", http.StatusBadRequest)
+		return
+	}
+	deleted := s.router.RemoveRoute(id)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"status":  "deleted",
+		"id":      id,
+		"success": deleted,
+	})
 }
 
 func (s *Server) handleAPIRoutesCanary(w http.ResponseWriter, r *http.Request) {

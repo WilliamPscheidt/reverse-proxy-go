@@ -21,6 +21,7 @@ type RouteConfig struct {
 	Methods       []string `json:"methods" yaml:"methods"`             // e.g. ["GET", "POST"] or empty for all
 	CanaryWeight  int      `json:"canary_weight" yaml:"canary_weight"` // 0 to 100 percentage
 	PreserveHost  bool     `json:"preserve_host" yaml:"preserve_host"` // true = keep client Host header, false = rewrite to upstream host
+	Backends      []string `json:"backends,omitempty" yaml:"backends,omitempty"` // Target backend addresses
 }
 
 // Route represents a runtime routing entry with its associated target pools.

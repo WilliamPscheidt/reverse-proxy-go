@@ -149,6 +149,30 @@ func (s *L7Server) SetCanaryPool(cp *BackendPool) {
 	s.InitPoolReverseProxies(cp)
 }
 
+// CreateRoutePool creates an initialized BackendPool for a route from URL strings.
+func (s *L7Server) CreateRoutePool(urls []string) *BackendPool {
+	if len(urls) == 0 {
+		return nil
+	}
+	pool := NewBackendPool()
+	for _, raw := range urls {
+		raw = strings.TrimSpace(raw)
+		if raw == "" {
+			continue
+		}
+		u := ParseURL(raw)
+		if u != nil {
+			backend := NewBackend(u, u.Host, 1)
+			pool.AddBackend(backend)
+			if s.metrics != nil {
+				s.metrics.SetBackendHealth(u.Host, true)
+			}
+		}
+	}
+	s.InitPoolReverseProxies(pool)
+	return pool
+}
+
 // GetCanaryPool returns the canary upstream pool.
 func (s *L7Server) GetCanaryPool() *BackendPool {
 	s.mu.RLock()
