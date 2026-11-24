@@ -57,6 +57,7 @@ func NewServer(
 	// REST API
 	mux.HandleFunc("/api/status", s.handleAPIStatus)
 	mux.HandleFunc("/api/analytics", s.handleAPIAnalytics)
+	mux.HandleFunc("/api/analytics/reset", s.handleAPIAnalyticsReset)
 	mux.HandleFunc("/api/settings", s.handleAPISettings)
 	mux.HandleFunc("/api/config", s.handleAPIConfig)
 	mux.HandleFunc("/api/backends", s.handleAPIBackends)
@@ -449,6 +450,19 @@ func (s *Server) handleAPIAnalytics(w http.ResponseWriter, r *http.Request) {
 	} else {
 		_ = json.NewEncoder(w).Encode(analytics.Snapshot{})
 	}
+}
+
+func (s *Server) handleAPIAnalyticsReset(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if s.analytics != nil {
+		s.analytics.Reset()
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "analytics_reset"})
 }
 
 func (s *Server) handleAPISettings(w http.ResponseWriter, r *http.Request) {

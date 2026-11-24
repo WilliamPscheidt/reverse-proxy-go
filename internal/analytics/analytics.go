@@ -66,6 +66,28 @@ func NewAnalytics() *Analytics {
 	return a
 }
 
+// Reset clears all counters and client analytics.
+func (a *Analytics) Reset() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	now := time.Now()
+	a.minBuckets = [60]int64{}
+	a.hourBuckets = [60]int64{}
+	a.dayBuckets = [24]int64{}
+	a.lastSec = now.Unix()
+	a.lastMin = now.Unix() / 60
+	a.lastHour = now.Unix() / 3600
+	a.total2xx = 0
+	a.total4xx = 0
+	a.total5xx = 0
+	a.total429 = 0
+	a.clientIPs = make(map[string]int64)
+	for _, g := range a.geoLocations {
+		g.Count = 0
+	}
+}
+
 // RecordRequest tracks an incoming HTTP request with its status and client IP.
 func (a *Analytics) RecordRequest(clientIP string, statusCode int) {
 	now := time.Now()
@@ -193,7 +215,9 @@ func (a *Analytics) GetSnapshot() Snapshot {
 
 	var geos []GeoLocation
 	for _, g := range a.geoLocations {
-		geos = append(geos, *g)
+		if g.Count > 0 {
+			geos = append(geos, *g)
+		}
 	}
 
 	return Snapshot{

@@ -663,7 +663,12 @@ const dashboardHTML = `<!DOCTYPE html>
               <i class="fa-solid fa-earth-americas" style="color: #60a5fa;"></i>
               Distribuição Geográfica dos Requests
             </div>
-            <span style="font-size: 12px; color: var(--text-muted);" id="geoSummary">5 regiões ativas</span>
+            <div style="display: flex; align-items: center; gap: 12px;">
+              <span style="font-size: 12px; color: var(--text-muted);" id="geoSummary">0 regiões ativas</span>
+              <button onclick="resetAnalytics()" class="btn btn-secondary btn-sm" title="Zerar histórico de requisições">
+                <i class="fa-solid fa-arrows-rotate"></i> Zerar Métricas
+              </button>
+            </div>
           </div>
           <div class="section-body">
             <div id="worldMap"></div>
@@ -1218,7 +1223,9 @@ const dashboardHTML = `<!DOCTYPE html>
             topTbody.innerHTML = '<tr><td colspan="3" style="text-align: center; color: var(--text-muted); padding: 16px;">Sem tráfego registrado.</td></tr>';
           }
 
-          // Update Vector Map
+          // Update Vector Map & Summary
+          const activeGeos = a.geo_locations ? a.geo_locations.length : 0;
+          document.getElementById('geoSummary').innerText = activeGeos + (activeGeos === 1 ? ' região ativa' : ' regiões ativas');
           if (a.geo_locations) {
             updateMapMarkers(a.geo_locations);
           }
@@ -1412,6 +1419,19 @@ const dashboardHTML = `<!DOCTYPE html>
         }
       } catch (err) {
         showToast('Erro de rede', true);
+      }
+    }
+
+    async function resetAnalytics() {
+      if (!confirm('Deseja zerar o histórico e contadores de requisições?')) return;
+      try {
+        const res = await fetch('/api/analytics/reset', { method: 'POST' });
+        if (res.ok) {
+          showToast('Métricas zeradas com sucesso');
+          fetchStatus();
+        }
+      } catch (err) {
+        showToast('Erro ao zerar métricas', true);
       }
     }
 
