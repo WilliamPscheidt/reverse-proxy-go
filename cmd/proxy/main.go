@@ -35,7 +35,7 @@ func main() {
 	flag.Parse()
 
 	if *showVersion {
-		fmt.Printf("Reverse Proxy & Load Balancer v%s\n", version)
+		fmt.Printf("ProxyGO v%s - High-Concurrency Reverse Proxy & Load Balancer\n", version)
 		os.Exit(0)
 	}
 
@@ -53,7 +53,7 @@ func main() {
 		cfg.L4.Algorithm = *algoFlag
 	}
 
-	log.Printf("[Main] Starting Reverse Proxy & Load Balancer v%s (Mode: %s)", version, cfg.Mode)
+	log.Printf("[ProxyGO] Starting ProxyGO v%s (Mode: %s)", version, cfg.Mode)
 
 	// 2. Setup Prometheus Metrics Exporter
 	var m *metrics.Metrics

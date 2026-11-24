@@ -30,7 +30,7 @@ func main() {
 	flag.Parse()
 
 	fmt.Println("================================================================================")
-	fmt.Printf("   REVERSE PROXY BENCHMARK ENGINE (High-Concurrency Load Generator)\n")
+	fmt.Printf("   ProxyGO BENCHMARK ENGINE (High-Concurrency Load Generator)\n")
 	fmt.Println("================================================================================")
 	fmt.Printf("Target URL:    %s\n", *targetURL)
 	fmt.Printf("Concurrency:   %d workers\n", *concurrency)

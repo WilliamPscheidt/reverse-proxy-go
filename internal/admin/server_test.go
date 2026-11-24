@@ -55,8 +55,8 @@ func TestAdmin_DashboardHTML(t *testing.T) {
 		t.Fatalf("expected 200 OK, got %d", rec.Code)
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, "Reverse Proxy & Load Balancer") {
-		t.Fatal("dashboard missing title")
+	if !strings.Contains(body, "ProxyGO") {
+		t.Fatal("dashboard missing ProxyGO title")
 	}
 }
 

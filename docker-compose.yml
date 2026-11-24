@@ -37,8 +37,9 @@ services:
     networks:
       - proxy-net
 
-  # High-Concurrency Reverse Proxy & Load Balancer L4/L7
-  proxy:
+  # ProxyGO: High-Concurrency Reverse Proxy & Load Balancer L4/L7
+  proxygo:
+    container_name: proxygo
     build:
       context: .
       dockerfile: Dockerfile

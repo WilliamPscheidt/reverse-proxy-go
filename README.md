@@ -28,7 +28,7 @@ Desenvolvido para cenários de alta concorrência com foco em baixa alocação d
 
 | Ferramenta | Throughput (RPS) | Latência p50 | Latência p99 |
 | :--- | :--- | :--- | :--- |
-| **reverse-proxy-go** | **85.420 req/s** | **1.12 ms** | **2.84 ms** |
+| **ProxyGO** | **85.420 req/s** | **1.12 ms** | **2.84 ms** |
 | Nginx (padrão) | 68.200 req/s | 1.85 ms | 4.90 ms |
 | Traefik v3 | 54.100 req/s | 2.30 ms | 6.15 ms |
 | HAProxy | 88.300 req/s | 1.05 ms | 2.65 ms |

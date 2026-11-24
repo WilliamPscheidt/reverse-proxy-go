@@ -19,7 +19,7 @@ const dashboardHTML = `<!DOCTYPE html>
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Reverse Proxy & Load Balancer | Enterprise Console</title>
+  <title>ProxyGO | Enterprise Console</title>
   
   <!-- FontAwesome 6 -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" integrity="sha512-DTOQO9RWCH3ppGqcWaEA1BIZOC6xxalwEsw9c2QQeAIftl+Vegovlnee1c9QX4TctnWMn13TZye+giMm8e2LwA==" crossorigin="anonymous" referrerpolicy="no-referrer" />
@@ -597,8 +597,8 @@ const dashboardHTML = `<!DOCTYPE html>
         <i class="fa-solid fa-server"></i>
       </div>
       <div>
-        <div class="brand-name">Reverse Proxy</div>
-        <div class="brand-mode" id="sidebarMode">L4 / L7 High-Perf</div>
+        <div class="brand-name">ProxyGO</div>
+        <div class="brand-mode" id="sidebarMode">L4/L7 Enterprise Proxy</div>
       </div>
     </div>
 
