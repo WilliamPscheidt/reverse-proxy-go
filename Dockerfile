@@ -14,5 +14,5 @@ RUN apk --no-cache add ca-certificates tzdata
 WORKDIR /app
 COPY --from=builder /bin/proxy /app/proxy
 
-EXPOSE 8080 9000 2112
+EXPOSE 8080 9000 8090 2112
 ENTRYPOINT ["/app/proxy"]

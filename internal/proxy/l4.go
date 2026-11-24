@@ -23,6 +23,7 @@ type BalancerTCPInterface interface {
 
 // L4Server represents a high-throughput L4 TCP reverse proxy and load balancer.
 type L4Server struct {
+	mu          sync.RWMutex
 	config      config.L4Config
 	timeouts    config.TimeoutsConfig
 	pool        *BackendPool
@@ -103,6 +104,40 @@ func (s *L4Server) Shutdown(ctx context.Context) error {
 	}
 }
 
+// GetPool returns the backend pool for L4.
+func (s *L4Server) GetPool() *BackendPool {
+	return s.pool
+}
+
+// GetBalancer returns the active load balancer for TCP.
+func (s *L4Server) GetBalancer() BalancerTCPInterface {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.balancer
+}
+
+// SetBalancer dynamically updates the load balancing algorithm for TCP.
+func (s *L4Server) SetBalancer(bal BalancerTCPInterface) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.balancer = bal
+}
+
+// AddBackendTarget dynamically adds a new backend to L4.
+func (s *L4Server) AddBackendTarget(addr string, weight int) *Backend {
+	backend := NewBackend(nil, addr, weight)
+	s.pool.AddBackend(backend)
+	if s.metrics != nil {
+		s.metrics.SetBackendHealth(addr, true)
+	}
+	return backend
+}
+
+// RemoveBackendTarget removes a backend from the L4 pool.
+func (s *L4Server) RemoveBackendTarget(addr string) bool {
+	return s.pool.RemoveBackend(addr)
+}
+
 func (s *L4Server) handleTCPConn(clientConn net.Conn) {
 	defer clientConn.Close()
 	start := time.Now()
@@ -122,7 +157,8 @@ func (s *L4Server) handleTCPConn(clientConn net.Conn) {
 	}
 
 	// 2. Select backend
-	backend, err := s.balancer.NextTCP(s.pool, clientAddr)
+	bal := s.GetBalancer()
+	backend, err := bal.NextTCP(s.pool, clientAddr)
 	if err != nil {
 		log.Printf("[L4] No healthy backends available for client %s", clientAddr)
 		return

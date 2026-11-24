@@ -11,12 +11,19 @@ import (
 // Config defines the complete configuration for the reverse proxy and load balancer.
 type Config struct {
 	Mode        string            `yaml:"mode"` // "l7", "l4", or "both"
+	Admin       AdminConfig       `yaml:"admin"`
 	L7          L7Config          `yaml:"l7"`
 	L4          L4Config          `yaml:"l4"`
 	Metrics     MetricsConfig     `yaml:"metrics"`
 	HealthCheck HealthCheckConfig `yaml:"health_check"`
 	RateLimit   RateLimitConfig   `yaml:"rate_limit"`
 	Timeouts    TimeoutsConfig    `yaml:"timeouts"`
+}
+
+// AdminConfig holds web administration dashboard settings.
+type AdminConfig struct {
+	Enabled bool   `yaml:"enabled"`
+	Listen  string `yaml:"listen"` // e.g., ":8090"
 }
 
 // BackendConfig holds backend target configuration.
@@ -82,6 +89,10 @@ type TimeoutsConfig struct {
 func DefaultConfig() *Config {
 	return &Config{
 		Mode: "both",
+		Admin: AdminConfig{
+			Enabled: true,
+			Listen:  ":8090",
+		},
 		L7: L7Config{
 			Enabled:   true,
 			Listen:    ":8080",

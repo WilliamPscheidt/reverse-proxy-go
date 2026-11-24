@@ -45,6 +45,7 @@ services:
     ports:
       - "8080:8080" # L7 HTTP Proxy
       - "9000:9000" # L4 TCP Proxy
+      - "8090:8090" # Web Admin Dashboard & API
       - "2112:2112" # Prometheus Metrics
     volumes:
       - ./config/docker-config.yaml:/app/config.yaml:ro

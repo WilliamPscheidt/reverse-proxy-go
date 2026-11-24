@@ -99,8 +99,27 @@ docker compose up -d --build
 Portas expostas:
 - `:8080` - Proxy L7 (HTTP)
 - `:9000` - Load Balancer L4 (TCP)
+- `:8090` - Painel Administrativo Web (`http://localhost:8090`)
 - `:2112` - Métricas Prometheus (`/metrics`)
 - `:9090` - Prometheus Web UI
+
+---
+
+## 🎛️ Painel Administrativo Web (Dashboard Interativo)
+
+O proxy disponibiliza uma interface visual administrativa integrada na porta `:8090` (`http://localhost:8090/` ou `/admin`):
+
+- **Monitoramento em Tempo Real**: Indicadores de uptime, requisições atendidas, conexões ativas e status dos nós.
+- **Gerenciamento Dinâmico de Destinos**: Adicione ou remova servidores upstream (L7 e L4) sem reiniciar a aplicação.
+- **Dreno e Manutenção**: Alterne manualmente nós entre ativo e manutenção (*drain*).
+- **Hot-Swap de Algoritmo**: Alterne o algoritmo de balanceamento em execução (*Round-Robin*, *Least Connections*, *IP Hash*) com um clique.
+- **API REST Administrativa**:
+  - `GET /api/status`: Estatísticas gerais e saúde do proxy.
+  - `GET /api/backends`: Lista todos os destinos e suas métricas.
+  - `POST /api/backends`: Adiciona novo servidor upstream.
+  - `DELETE /api/backends`: Remove um servidor upstream.
+  - `POST /api/backends/toggle`: Habilita/desabilita nó para manutenção.
+  - `POST /api/algorithm`: Atualiza o algoritmo de balanceamento em tempo real.
 
 ### Execução Local
 

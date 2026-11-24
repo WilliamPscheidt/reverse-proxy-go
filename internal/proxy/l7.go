@@ -10,6 +10,7 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/WilliamPscheidt/reverse-proxy-go/internal/config"
@@ -25,6 +26,7 @@ type BalancerInterface interface {
 
 // L7Server represents the HTTP reverse proxy and load balancer server.
 type L7Server struct {
+	mu          sync.RWMutex
 	config      config.L7Config
 	pool        *BackendPool
 	balancer    BalancerInterface
@@ -106,6 +108,57 @@ func (s *L7Server) Handler() http.Handler {
 	return s.httpServer.Handler
 }
 
+// GetPool returns the backend pool for L7.
+func (s *L7Server) GetPool() *BackendPool {
+	return s.pool
+}
+
+// GetBalancer returns the active load balancer.
+func (s *L7Server) GetBalancer() BalancerInterface {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.balancer
+}
+
+// SetBalancer dynamically updates the load balancing algorithm.
+func (s *L7Server) SetBalancer(bal BalancerInterface) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.balancer = bal
+}
+
+// AddBackendTarget dynamically creates and adds a new upstream backend to L7.
+func (s *L7Server) AddBackendTarget(rawURL string, weight int) (*Backend, error) {
+	u := ParseURL(rawURL)
+	if u == nil {
+		return nil, fmt.Errorf("invalid URL: %s", rawURL)
+	}
+	backend := NewBackend(u, u.Host, weight)
+	targetURL := u
+	rp := &httputil.ReverseProxy{
+		Rewrite: func(pr *httputil.ProxyRequest) {
+			pr.SetURL(targetURL)
+			pr.SetXForwarded()
+		},
+		Transport: s.transport,
+		ErrorHandler: func(w http.ResponseWriter, req *http.Request, err error) {
+			log.Printf("[L7] Backend %s error: %v", targetURL.Host, err)
+			http.Error(w, fmt.Sprintf("Bad Gateway: upstream %s unreachable", targetURL.Host), http.StatusBadGateway)
+		},
+	}
+	backend.ReverseProxy = rp
+	s.pool.AddBackend(backend)
+	if s.metrics != nil {
+		s.metrics.SetBackendHealth(u.Host, true)
+	}
+	return backend, nil
+}
+
+// RemoveBackendTarget removes a backend from the pool by address or URL.
+func (s *L7Server) RemoveBackendTarget(addr string) bool {
+	return s.pool.RemoveBackend(addr)
+}
+
 // Start begins listening and serving HTTP traffic.
 func (s *L7Server) Start() error {
 	log.Printf("[L7] HTTP Reverse Proxy listening on %s (algorithm: %s)", s.config.Listen, s.balancer.Name())
@@ -158,7 +211,8 @@ func (s *L7Server) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 2. Load Balancing Selection
-	backend, err := s.balancer.NextHTTP(s.pool, r, clientIP)
+	bal := s.GetBalancer()
+	backend, err := bal.NextHTTP(s.pool, r, clientIP)
 	if err != nil {
 		if s.metrics != nil {
 			s.metrics.RecordHTTPRequest("none", r.Method, http.StatusServiceUnavailable, time.Since(start))

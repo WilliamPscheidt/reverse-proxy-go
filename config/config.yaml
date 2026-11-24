@@ -3,6 +3,11 @@
 # Operational mode: "l7" (HTTP only), "l4" (TCP only), or "both"
 mode: "both"
 
+# Web Administration Dashboard & Control Plane
+admin:
+  enabled: true
+  listen: ":8090"
+
 # L7 HTTP Reverse Proxy Configuration
 l7:
   enabled: true

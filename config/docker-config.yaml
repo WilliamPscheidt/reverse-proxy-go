@@ -1,5 +1,9 @@
 mode: "both"
 
+admin:
+  enabled: true
+  listen: ":8090"
+
 l7:
   enabled: true
   listen: ":8080"

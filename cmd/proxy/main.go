@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/WilliamPscheidt/reverse-proxy-go/internal/admin"
 	"github.com/WilliamPscheidt/reverse-proxy-go/internal/balancer"
 	"github.com/WilliamPscheidt/reverse-proxy-go/internal/config"
 	"github.com/WilliamPscheidt/reverse-proxy-go/internal/health"
@@ -164,7 +165,18 @@ func main() {
 			cfg.HealthCheck.Interval, cfg.HealthCheck.Timeout)
 	}
 
-	// 7. Wait for OS Termination Signal (Graceful Shutdown)
+	// 7. Setup Web Administration Dashboard & REST API
+	var adminServer *admin.Server
+	if cfg.Admin.Enabled {
+		adminServer = admin.NewServer(cfg, l7Server, l4Server, rateLimiter, m)
+		go func() {
+			if err := adminServer.Start(); err != nil && err != http.ErrServerClosed {
+				log.Printf("[Admin] Server error: %v", err)
+			}
+		}()
+	}
+
+	// 8. Wait for OS Termination Signal (Graceful Shutdown)
 	stopSignal := make(chan os.Signal, 1)
 	signal.Notify(stopSignal, os.Interrupt, syscall.SIGTERM)
 	sig := <-stopSignal
@@ -188,6 +200,9 @@ func main() {
 	}
 	if metricsServer != nil {
 		_ = metricsServer.Shutdown(shutdownCtx)
+	}
+	if adminServer != nil {
+		_ = adminServer.Shutdown(shutdownCtx)
 	}
 
 	log.Println("[Main] Server stopped cleanly. Bye!")

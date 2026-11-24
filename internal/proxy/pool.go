@@ -127,9 +127,22 @@ func (p *BackendPool) FindByAddr(addr string) *Backend {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	for _, b := range p.backends {
-		if b.Addr == addr || (b.URL != nil && b.URL.Host == addr) {
+		if b.Addr == addr || (b.URL != nil && b.URL.Host == addr) || (b.URL != nil && b.URL.String() == addr) {
 			return b
 		}
 	}
 	return nil
+}
+
+// RemoveBackend removes a backend matching addr from the pool. Returns true if removed.
+func (p *BackendPool) RemoveBackend(addr string) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for i, b := range p.backends {
+		if b.Addr == addr || (b.URL != nil && b.URL.Host == addr) || (b.URL != nil && b.URL.String() == addr) {
+			p.backends = append(p.backends[:i], p.backends[i+1:]...)
+			return true
+		}
+	}
+	return false
 }
