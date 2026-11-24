@@ -1,0 +1,71 @@
+version: '3.8'
+
+services:
+  # Upstream Backend 1
+  backend-1:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    environment:
+      - HTTP_PORT=8081
+      - TCP_PORT=9081
+      - NAME=backend-alpha
+    networks:
+      - proxy-net
+
+  # Upstream Backend 2
+  backend-2:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    environment:
+      - HTTP_PORT=8082
+      - TCP_PORT=9082
+      - NAME=backend-beta
+    networks:
+      - proxy-net
+
+  # Upstream Backend 3
+  backend-3:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    environment:
+      - HTTP_PORT=8083
+      - TCP_PORT=9083
+      - NAME=backend-gamma
+    networks:
+      - proxy-net
+
+  # High-Concurrency Reverse Proxy & Load Balancer L4/L7
+  proxy:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080" # L7 HTTP Proxy
+      - "9000:9000" # L4 TCP Proxy
+      - "2112:2112" # Prometheus Metrics
+    volumes:
+      - ./config/docker-config.yaml:/app/config.yaml:ro
+    command: ["/app/proxy", "-config", "/app/config.yaml"]
+    depends_on:
+      - backend-1
+      - backend-2
+      - backend-3
+    networks:
+      - proxy-net
+
+  # Prometheus Monitoring
+  prometheus:
+    image: prom/prometheus:v2.48.0
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./config/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    networks:
+      - proxy-net
+
+networks:
+  proxy-net:
+    driver: bridge

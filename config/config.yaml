@@ -1,0 +1,60 @@
+# Reverse Proxy & Load Balancer L4/L7 Configuration
+
+# Operational mode: "l7" (HTTP only), "l4" (TCP only), or "both"
+mode: "both"
+
+# L7 HTTP Reverse Proxy Configuration
+l7:
+  enabled: true
+  listen: ":8080"
+  algorithm: "round_robin" # Supported: round_robin, least_conn, ip_hash
+  backends:
+    - url: "http://127.0.0.1:8081"
+      weight: 1
+    - url: "http://127.0.0.1:8082"
+      weight: 1
+    - url: "http://127.0.0.1:8083"
+      weight: 1
+
+# L4 TCP Load Balancer Configuration
+l4:
+  enabled: true
+  listen: ":9000"
+  algorithm: "round_robin" # Supported: round_robin, least_conn, ip_hash
+  backends:
+    - addr: "127.0.0.1:9081"
+      weight: 1
+    - addr: "127.0.0.1:9082"
+      weight: 1
+
+# Prometheus Metrics Exporter
+metrics:
+  enabled: true
+  listen: ":2112"
+  path: "/metrics"
+
+# Active Background Health Check
+health_check:
+  enabled: true
+  interval: 3s             # Health check frequency
+  timeout: 1s              # Timeout per check
+  path: "/health"          # HTTP endpoint to verify
+  expected_status: 200     # HTTP status indicating health
+  unhealthy_threshold: 3   # Consecutive failures before removing backend
+  healthy_threshold: 2     # Consecutive successes before restoring backend
+
+# Sharded Token Bucket In-Memory Rate Limiter
+rate_limit:
+  enabled: true
+  rate: 150000             # Tokens replenished per second per client IP
+  burst: 200000            # Maximum burst token capacity
+  cleanup_interval: 1m     # Frequency to purge inactive client bucket memory
+
+# Network and Connection Timeouts
+timeouts:
+  read_timeout: 30s
+  write_timeout: 30s
+  idle_timeout: 120s
+  dial_timeout: 2s
+  max_idle_conns: 10000
+  max_idle_conns_per_host: 2500

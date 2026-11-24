@@ -101,6 +101,11 @@ func NewL7Server(
 	return s
 }
 
+// Handler returns the root http.Handler configured for the L7 server.
+func (s *L7Server) Handler() http.Handler {
+	return s.httpServer.Handler
+}
+
 // Start begins listening and serving HTTP traffic.
 func (s *L7Server) Start() error {
 	log.Printf("[L7] HTTP Reverse Proxy listening on %s (algorithm: %s)", s.config.Listen, s.balancer.Name())
