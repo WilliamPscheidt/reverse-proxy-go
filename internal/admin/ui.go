@@ -291,14 +291,14 @@ const dashboardHTML = `<!DOCTYPE html>
     }
 
     /* Cards */
-    .stats-grid {
+    .stats-grid, .metrics-grid {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
       gap: 16px;
       margin-bottom: 24px;
     }
 
-    .stat-card {
+    .stat-card, .metric-card {
       background: var(--card-bg);
       border: 1px solid var(--border);
       border-radius: 8px;
@@ -306,14 +306,14 @@ const dashboardHTML = `<!DOCTYPE html>
       position: relative;
     }
 
-    .stat-header {
+    .stat-header, .metric-header {
       display: flex;
       justify-content: space-between;
       align-items: center;
       margin-bottom: 8px;
     }
 
-    .stat-label {
+    .stat-label, .metric-title {
       font-size: 11px;
       font-weight: 500;
       color: var(--text-muted);
@@ -326,14 +326,31 @@ const dashboardHTML = `<!DOCTYPE html>
       font-size: 14px;
     }
 
-    .stat-value {
+    .metric-icon {
+      width: 34px;
+      height: 34px;
+      border-radius: 8px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 15px;
+      flex-shrink: 0;
+    }
+
+    .metric-icon i, .metric-icon svg {
+      font-size: 15px;
+      width: 1em;
+      height: 1em;
+    }
+
+    .stat-value, .metric-value {
       font-size: 26px;
       font-weight: 600;
       color: #fff;
       font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
     }
 
-    .stat-sub {
+    .stat-sub, .metric-sub {
       font-size: 12px;
       color: var(--text-muted);
       margin-top: 4px;
@@ -2817,6 +2834,10 @@ const dashboardHTML = `<!DOCTYPE html>
       fetchRoutes();
       fetchCircuitBreakers();
       fetchCacheStats();
+      if (window.location.hash) {
+        const h = window.location.hash.replace('#', '');
+        if (h) switchTab(h);
+      }
       setInterval(fetchStatus, 2500);
       setInterval(fetchCircuitBreakers, 4000);
       setInterval(fetchCacheStats, 4000);
