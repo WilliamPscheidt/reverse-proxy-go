@@ -106,21 +106,28 @@ Portas expostas:
 
 ---
 
-## 🎛️ Painel Administrativo Web (Dashboard Interativo)
+## 🎛️ Painel Administrativo Web (Enterprise Console & Dashboard)
 
-O proxy disponibiliza uma interface visual administrativa integrada na porta `:8090` (`http://localhost:8090/` ou `/admin`):
+O proxy disponibiliza uma interface visual administrativa integrada e estilizada com **FontAwesome 6**, tema dark enterprise e navegação por menu lateral na porta `:8090` (`http://localhost:8090/` ou `/admin`):
 
-- **Monitoramento em Tempo Real**: Indicadores de uptime, requisições atendidas, conexões ativas e status dos nós.
-- **Gerenciamento Dinâmico de Destinos**: Adicione ou remova servidores upstream (L7 e L4) sem reiniciar a aplicação.
-- **Dreno e Manutenção**: Alterne manualmente nós entre ativo e manutenção (*drain*).
-- **Hot-Swap de Algoritmo**: Alterne o algoritmo de balanceamento em execução (*Round-Robin*, *Least Connections*, *IP Hash*) com um clique.
+- **Sidebar de Navegação Dinâmica**:
+  - **Visão Geral / Tráfego (Homepage)**: Cards com métricas temporais em janelas deslizantes (**último minuto**, **última hora**, **últimas 24 horas**), total de bloqueios HTTP 429, barras de distribuição de status HTTP (2xx, 429, 5xx) e tabela dos principais IPs de origem.
+  - **Mapa Geográfico Interativo**: Visualização em mapa escuro (*Leaflet.js + CartoDB Dark Matter*) exibindo em tempo real a origem geográfica das requisições e a concentração de tráfego por região.
+  - **Servidores Upstream**: Monitoramento de nós com métricas de conexões ativas, volume de requisições, falhas/sucessos de health check, dreno manual e cadastro dinâmico de novos backends HTTP (L7) e TCP (L4).
+  - **Algoritmos de Balanceamento**: Hot-swap com um clique entre *Round-Robin* (atômico), *Least Connections* e *IP Hash* (sticky sessions).
+  - **Rate Limit & Redis**: Monitoramento da saúde do cluster Redis, indicação de fallback atômico in-memory e ajuste em tempo real de taxas de reabastecimento (*rate req/s*) e rajadas (*burst*).
+  - **Configurações Gerais**: Ajuste de timeouts (*Read*, *Write*, *Dial*), modo operacional (*Both L7/L4*, *L7 Only*, *L4 Only*) e parâmetros do health check ativo (*path*, *intervalo*, *unhealthy threshold*).
 - **API REST Administrativa**:
-  - `GET /api/status`: Estatísticas gerais e saúde do proxy.
+  - `GET /api/status`: Estatísticas gerais, uptime e saúde do proxy e do Redis.
+  - `GET /api/analytics`: Janelas temporais deslizantes (minuto, hora, dia), top IPs e localização geográfica.
+  - `GET /api/settings`: Leitura das configurações gerais do sistema.
+  - `POST /api/settings`: Atualização em tempo real de timeouts, thresholds e modo operacional.
   - `GET /api/backends`: Lista todos os destinos e suas métricas.
   - `POST /api/backends`: Adiciona novo servidor upstream.
   - `DELETE /api/backends`: Remove um servidor upstream.
-  - `POST /api/backends/toggle`: Habilita/desabilita nó para manutenção.
+  - `POST /api/backends/toggle`: Habilita/desabilita nó para manutenção (*drain*).
   - `POST /api/algorithm`: Atualiza o algoritmo de balanceamento em tempo real.
+  - `POST /api/ratelimit`: Ajusta os limites de requisições por IP dinamicamente.
 
 ### Execução Local
 
@@ -177,6 +184,8 @@ k6 run --vus 100 --duration 30s benchmark.js
 │   ├── docker-config.yaml  # Configuração para containers
 │   └── prometheus.yml      # Configuração de coleta do Prometheus
 ├── internal/
+│   ├── admin/              # Console Web SPA, Leaflet dark map e API REST
+│   ├── analytics/          # Janelas deslizantes (min/hora/dia), GeoIP e Top IPs
 │   ├── balancer/           # Algoritmos Round-Robin, Least Connections e IP Hash
 │   ├── health/             # Health check ativo em background
 │   ├── ratelimit/          # Token Bucket sharded in-memory

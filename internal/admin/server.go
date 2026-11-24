@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/WilliamPscheidt/reverse-proxy-go/internal/analytics"
 	"github.com/WilliamPscheidt/reverse-proxy-go/internal/balancer"
 	"github.com/WilliamPscheidt/reverse-proxy-go/internal/config"
 	"github.com/WilliamPscheidt/reverse-proxy-go/internal/metrics"
@@ -23,6 +24,7 @@ type Server struct {
 	l4Server    *proxy.L4Server
 	rateLimiter ratelimit.Limiter
 	metrics     *metrics.Metrics
+	analytics   *analytics.Analytics
 	httpServer  *http.Server
 	startTime   time.Time
 }
@@ -34,6 +36,7 @@ func NewServer(
 	l4 *proxy.L4Server,
 	rl ratelimit.Limiter,
 	m *metrics.Metrics,
+	a *analytics.Analytics,
 ) *Server {
 	s := &Server{
 		cfg:         cfg,
@@ -41,6 +44,7 @@ func NewServer(
 		l4Server:    l4,
 		rateLimiter: rl,
 		metrics:     m,
+		analytics:   a,
 		startTime:   time.Now(),
 	}
 
@@ -52,6 +56,8 @@ func NewServer(
 
 	// REST API
 	mux.HandleFunc("/api/status", s.handleAPIStatus)
+	mux.HandleFunc("/api/analytics", s.handleAPIAnalytics)
+	mux.HandleFunc("/api/settings", s.handleAPISettings)
 	mux.HandleFunc("/api/config", s.handleAPIConfig)
 	mux.HandleFunc("/api/backends", s.handleAPIBackends)
 	mux.HandleFunc("/api/backends/toggle", s.handleAPIToggleBackend)
@@ -186,7 +192,7 @@ func (s *Server) handleAPIStatus(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
@@ -195,7 +201,7 @@ func (s *Server) handleAPIConfig(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	_ = json.NewEncoder(w).Encode(s.cfg)
 }
 
@@ -239,7 +245,7 @@ func (s *Server) handleAPIBackends(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		_ = json.NewEncoder(w).Encode(list)
 
 	case http.MethodPost:
@@ -265,11 +271,13 @@ func (s *Server) handleAPIBackends(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, err.Error(), http.StatusBadRequest)
 				return
 			}
+			w.Header().Set("Content-Type", "application/json; charset=utf-8")
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(map[string]any{"status": "created", "backend": b.URL.String()})
 			return
 		} else if req.Type == "l4" && s.l4Server != nil {
 			b := s.l4Server.AddBackendTarget(req.Target, req.Weight)
+			w.Header().Set("Content-Type", "application/json; charset=utf-8")
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(map[string]any{"status": "created", "backend": b.Addr})
 			return
@@ -302,6 +310,7 @@ func (s *Server) handleAPIBackends(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
 		_ = json.NewEncoder(w).Encode(map[string]string{"status": "removed", "target": req.Target})
 
@@ -348,6 +357,7 @@ func (s *Server) handleAPIToggleBackend(w http.ResponseWriter, r *http.Request) 
 		s.metrics.SetBackendHealth(id, req.Alive)
 	}
 
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"status": "updated",
@@ -385,6 +395,7 @@ func (s *Server) handleAPISetAlgorithm(w http.ResponseWriter, r *http.Request) {
 		s.l4Server.SetBalancer(bal)
 	}
 
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(map[string]string{
 		"status":    "algorithm_updated",
@@ -417,6 +428,7 @@ func (s *Server) handleAPISetRateLimit(w http.ResponseWriter, r *http.Request) {
 		s.rateLimiter.SetRateAndBurst(req.Rate, req.Burst)
 	}
 
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"status":  "ratelimit_updated",
@@ -424,4 +436,49 @@ func (s *Server) handleAPISetRateLimit(w http.ResponseWriter, r *http.Request) {
 		"rate":    s.cfg.RateLimit.Rate,
 		"burst":   s.cfg.RateLimit.Burst,
 	})
+}
+
+func (s *Server) handleAPIAnalytics(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	if s.analytics != nil {
+		_ = json.NewEncoder(w).Encode(s.analytics.GetSnapshot())
+	} else {
+		_ = json.NewEncoder(w).Encode(analytics.Snapshot{})
+	}
+}
+
+func (s *Server) handleAPISettings(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		_ = json.NewEncoder(w).Encode(s.cfg)
+	case http.MethodPost:
+		var req struct {
+			Mode        *string                   `json:"mode"`
+			HealthCheck *config.HealthCheckConfig `json:"health_check"`
+			Timeouts    *config.TimeoutsConfig    `json:"timeouts"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, fmt.Sprintf("invalid payload: %v", err), http.StatusBadRequest)
+			return
+		}
+		if req.Mode != nil && *req.Mode != "" {
+			s.cfg.Mode = *req.Mode
+		}
+		if req.HealthCheck != nil {
+			s.cfg.HealthCheck = *req.HealthCheck
+		}
+		if req.Timeouts != nil {
+			s.cfg.Timeouts = *req.Timeouts
+		}
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(map[string]any{"status": "settings_updated", "config": s.cfg})
+	default:
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+	}
 }

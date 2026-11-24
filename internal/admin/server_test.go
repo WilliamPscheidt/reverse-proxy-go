@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/WilliamPscheidt/reverse-proxy-go/internal/analytics"
 	"github.com/WilliamPscheidt/reverse-proxy-go/internal/balancer"
 	"github.com/WilliamPscheidt/reverse-proxy-go/internal/config"
 	"github.com/WilliamPscheidt/reverse-proxy-go/internal/metrics"
@@ -18,6 +19,7 @@ import (
 func setupTestAdminServer() (*Server, *proxy.L7Server, *proxy.L4Server) {
 	cfg := config.DefaultConfig()
 	m := metrics.NewMetrics()
+	a := analytics.NewAnalytics()
 
 	// L7
 	u1, _ := url.Parse("http://127.0.0.1:8081")
@@ -25,6 +27,7 @@ func setupTestAdminServer() (*Server, *proxy.L7Server, *proxy.L4Server) {
 	pool7 := proxy.NewBackendPool(b1)
 	bal7, _ := balancer.New("round_robin")
 	l7 := proxy.NewL7Server(cfg.L7, cfg.Timeouts, pool7, bal7, nil, m)
+	l7.SetAnalytics(a)
 
 	// L4
 	b2 := proxy.NewBackend(nil, "127.0.0.1:9081", 1)
@@ -32,7 +35,7 @@ func setupTestAdminServer() (*Server, *proxy.L7Server, *proxy.L4Server) {
 	bal4, _ := balancer.New("round_robin")
 	l4 := proxy.NewL4Server(cfg.L4, cfg.Timeouts, pool4, bal4, nil, m)
 
-	srv := NewServer(cfg, l7, l4, nil, m)
+	srv := NewServer(cfg, l7, l4, nil, m, a)
 	return srv, l7, l4
 }
 
@@ -150,5 +153,49 @@ func TestAdmin_AlgorithmHotSwap(t *testing.T) {
 	}
 	if l7.GetBalancer().Name() != "least_conn" {
 		t.Fatalf("expected least_conn, got %s", l7.GetBalancer().Name())
+	}
+}
+
+func TestAdmin_Analytics(t *testing.T) {
+	srv, l7, _ := setupTestAdminServer()
+
+	// Simulate requests
+	l7.GetAnalytics().RecordRequest("127.0.0.1", 200)
+	l7.GetAnalytics().RecordRequest("203.0.113.1", 429)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/analytics", nil)
+	rec := httptest.NewRecorder()
+	srv.httpServer.Handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d", rec.Code)
+	}
+
+	var snap analytics.Snapshot
+	if err := json.Unmarshal(rec.Body.Bytes(), &snap); err != nil {
+		t.Fatalf("failed to decode json: %v", err)
+	}
+
+	if snap.LastMinuteRequests != 2 {
+		t.Fatalf("expected 2 requests in last minute, got %d", snap.LastMinuteRequests)
+	}
+	if snap.Total429 != 1 {
+		t.Fatalf("expected 1 429 block, got %d", snap.Total429)
+	}
+}
+
+func TestAdmin_Settings(t *testing.T) {
+	srv, _, _ := setupTestAdminServer()
+
+	payload := map[string]any{
+		"mode": "l7",
+	}
+	data, _ := json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPost, "/api/settings", bytes.NewReader(data))
+	rec := httptest.NewRecorder()
+	srv.httpServer.Handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d", rec.Code)
 	}
 }

@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/WilliamPscheidt/reverse-proxy-go/internal/analytics"
 	"github.com/WilliamPscheidt/reverse-proxy-go/internal/config"
 	"github.com/WilliamPscheidt/reverse-proxy-go/internal/metrics"
 	"github.com/WilliamPscheidt/reverse-proxy-go/internal/ratelimit"
@@ -32,6 +33,7 @@ type L7Server struct {
 	balancer    BalancerInterface
 	rateLimiter ratelimit.Limiter
 	metrics     *metrics.Metrics
+	analytics   *analytics.Analytics
 	transport   *http.Transport
 	httpServer  *http.Server
 }
@@ -120,6 +122,20 @@ func (s *L7Server) GetBalancer() BalancerInterface {
 	return s.balancer
 }
 
+// SetAnalytics registers the analytics collector.
+func (s *L7Server) SetAnalytics(a *analytics.Analytics) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.analytics = a
+}
+
+// GetAnalytics returns the registered analytics collector.
+func (s *L7Server) GetAnalytics() *analytics.Analytics {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.analytics
+}
+
 // SetBalancer dynamically updates the load balancing algorithm.
 func (s *L7Server) SetBalancer(bal BalancerInterface) {
 	s.mu.Lock()
@@ -201,6 +217,9 @@ func (s *L7Server) handleHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// 1. Rate Limiting Check
 	if s.rateLimiter != nil && !s.rateLimiter.Allow(clientIP) {
+		if s.analytics != nil {
+			s.analytics.RecordRequest(clientIP, http.StatusTooManyRequests)
+		}
 		if s.metrics != nil {
 			s.metrics.RecordRateLimitExceeded()
 			s.metrics.RecordHTTPRequest("ratelimit", r.Method, http.StatusTooManyRequests, time.Since(start))
@@ -260,12 +279,15 @@ func (s *L7Server) handleHTTP(w http.ResponseWriter, r *http.Request) {
 		sw.statusCode = http.StatusBadGateway
 	}
 
-	// 5. Record Prometheus Metrics
+	// 5. Record Prometheus Metrics & Analytics
+	code := sw.statusCode
+	if code == 0 {
+		code = http.StatusOK
+	}
+	if s.analytics != nil {
+		s.analytics.RecordRequest(clientIP, code)
+	}
 	if s.metrics != nil {
-		code := sw.statusCode
-		if code == 0 {
-			code = http.StatusOK
-		}
 		duration := time.Since(start)
 		s.metrics.RecordHTTPRequest(backendHost, r.Method, code, duration)
 	}

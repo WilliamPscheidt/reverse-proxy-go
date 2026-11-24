@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/WilliamPscheidt/reverse-proxy-go/internal/admin"
+	"github.com/WilliamPscheidt/reverse-proxy-go/internal/analytics"
 	"github.com/WilliamPscheidt/reverse-proxy-go/internal/balancer"
 	"github.com/WilliamPscheidt/reverse-proxy-go/internal/config"
 	"github.com/WilliamPscheidt/reverse-proxy-go/internal/health"
@@ -168,8 +169,13 @@ func main() {
 
 	// 7. Setup Web Administration Dashboard & REST API
 	var adminServer *admin.Server
+	analyticsCollector := analytics.NewAnalytics()
+	if l7Server != nil {
+		l7Server.SetAnalytics(analyticsCollector)
+	}
+
 	if cfg.Admin.Enabled {
-		adminServer = admin.NewServer(cfg, l7Server, l4Server, rateLimiter, m)
+		adminServer = admin.NewServer(cfg, l7Server, l4Server, rateLimiter, m, analyticsCollector)
 		go func() {
 			if err := adminServer.Start(); err != nil && err != http.ErrServerClosed {
 				log.Printf("[Admin] Server error: %v", err)
