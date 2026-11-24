@@ -31,6 +31,7 @@ type shard struct {
 // ShardedTokenBucket implements an ultra-high performance in-memory rate limiter
 // designed to eliminate lock contention at 100k+ req/s.
 type ShardedTokenBucket struct {
+	cfgMu      sync.RWMutex
 	rate       float64
 	burst      float64
 	numShards  uint64
@@ -75,6 +76,21 @@ func (tb *ShardedTokenBucket) getShard(ip string) *shard {
 	return tb.shards[hash%tb.numShards]
 }
 
+// SetRateAndBurst dynamically updates rate limit parameters.
+func (tb *ShardedTokenBucket) SetRateAndBurst(rate float64, burst int) {
+	tb.cfgMu.Lock()
+	defer tb.cfgMu.Unlock()
+	tb.rate = rate
+	tb.burst = float64(burst)
+}
+
+// GetRateAndBurst returns current rate and burst values.
+func (tb *ShardedTokenBucket) GetRateAndBurst() (float64, int) {
+	tb.cfgMu.RLock()
+	defer tb.cfgMu.RUnlock()
+	return tb.rate, int(tb.burst)
+}
+
 // Allow checks if 1 token is available for the given IP. Returns true if allowed.
 func (tb *ShardedTokenBucket) Allow(ip string) bool {
 	return tb.AllowN(ip, 1.0)
@@ -82,6 +98,11 @@ func (tb *ShardedTokenBucket) Allow(ip string) bool {
 
 // AllowN checks if n tokens are available for the given IP. Returns true if allowed.
 func (tb *ShardedTokenBucket) AllowN(ip string, n float64) bool {
+	tb.cfgMu.RLock()
+	rate := tb.rate
+	burst := tb.burst
+	tb.cfgMu.RUnlock()
+
 	s := tb.getShard(ip)
 	now := time.Now()
 
@@ -91,11 +112,11 @@ func (tb *ShardedTokenBucket) AllowN(ip string, n float64) bool {
 	b, exists := s.buckets[ip]
 	if !exists {
 		// New client: starts with full capacity minus requested tokens
-		if tb.burst < n {
+		if burst < n {
 			return false
 		}
 		s.buckets[ip] = &clientBucket{
-			tokens:     tb.burst - n,
+			tokens:     burst - n,
 			lastRefill: now,
 			lastSeen:   now,
 		}
@@ -105,7 +126,7 @@ func (tb *ShardedTokenBucket) AllowN(ip string, n float64) bool {
 	// Refill tokens based on elapsed time
 	elapsed := now.Sub(b.lastRefill).Seconds()
 	if elapsed > 0 {
-		b.tokens = math.Min(tb.burst, b.tokens+elapsed*tb.rate)
+		b.tokens = math.Min(burst, b.tokens+elapsed*rate)
 		b.lastRefill = now
 	}
 	b.lastSeen = now

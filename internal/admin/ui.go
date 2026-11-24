@@ -688,6 +688,14 @@ const dashboardHTML = `<!DOCTYPE html>
               <span>Buffer Pooling L4</span>
               <span class="config-val">32 KB (sync.Pool)</span>
             </div>
+            <div style="margin-top: 12px; padding-top: 10px; border-top: 1px solid rgba(255, 255, 255, 0.05);">
+              <div style="font-size: 11px; text-transform: uppercase; color: var(--text-muted); margin-bottom: 6px; font-weight: 500;">Ajustar Limite por IP</div>
+              <div style="display: flex; gap: 8px; align-items: center;">
+                <input type="number" id="inputRate" placeholder="Rate (req/s)" style="padding: 6px 8px; font-size: 12px; width: 90px;" value="5" min="1" />
+                <input type="number" id="inputBurst" placeholder="Burst" style="padding: 6px 8px; font-size: 12px; width: 90px;" value="10" min="1" />
+                <button onclick="updateRateLimit()" class="btn btn-sm" style="white-space: nowrap;"><i class="fa-solid fa-check"></i> Salvar</button>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -903,6 +911,27 @@ const dashboardHTML = `<!DOCTYPE html>
         }
       } catch (err) {
         showToast('Erro ao atualizar status', true);
+      }
+    }
+
+    async function updateRateLimit() {
+      const rate = parseFloat(document.getElementById('inputRate').value);
+      const burst = parseInt(document.getElementById('inputBurst').value);
+      if (!rate || !burst) return;
+      try {
+        const res = await fetch('/api/ratelimit', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ rate, burst, enabled: true })
+        });
+        if (res.ok) {
+          showToast('Limite atualizado: ' + rate + ' req/s (burst: ' + burst + ')');
+          fetchStatus();
+        } else {
+          showToast('Erro ao atualizar rate limit', true);
+        }
+      } catch(err) {
+        showToast('Erro de rede', true);
       }
     }
 

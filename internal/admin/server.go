@@ -56,6 +56,7 @@ func NewServer(
 	mux.HandleFunc("/api/backends", s.handleAPIBackends)
 	mux.HandleFunc("/api/backends/toggle", s.handleAPIToggleBackend)
 	mux.HandleFunc("/api/algorithm", s.handleAPISetAlgorithm)
+	mux.HandleFunc("/api/ratelimit", s.handleAPISetRateLimit)
 
 	s.httpServer = &http.Server{
 		Addr:    cfg.Admin.Listen,
@@ -388,5 +389,39 @@ func (s *Server) handleAPISetAlgorithm(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]string{
 		"status":    "algorithm_updated",
 		"algorithm": bal.Name(),
+	})
+}
+
+func (s *Server) handleAPISetRateLimit(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		Enabled *bool   `json:"enabled"`
+		Rate    float64 `json:"rate"`
+		Burst   int     `json:"burst"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, fmt.Sprintf("invalid payload: %v", err), http.StatusBadRequest)
+		return
+	}
+
+	if req.Enabled != nil {
+		s.cfg.RateLimit.Enabled = *req.Enabled
+	}
+	if req.Rate > 0 && req.Burst > 0 && s.rateLimiter != nil {
+		s.cfg.RateLimit.Rate = req.Rate
+		s.cfg.RateLimit.Burst = req.Burst
+		s.rateLimiter.SetRateAndBurst(req.Rate, req.Burst)
+	}
+
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"status":  "ratelimit_updated",
+		"enabled": s.cfg.RateLimit.Enabled,
+		"rate":    s.cfg.RateLimit.Rate,
+		"burst":   s.cfg.RateLimit.Burst,
 	})
 }

@@ -52,8 +52,8 @@ health_check:
 rate_limit:
   enabled: true
   strategy: "redis"            # "redis" (distributed) or "memory" (local sharded)
-  rate: 150000                 # Tokens replenished per second per client IP
-  burst: 200000                # Maximum burst token capacity
+  rate: 5                      # Limite: 5 requisições por segundo por IP
+  burst: 10                    # Rajada máxima: 10 requisições (acima disso bloqueia com HTTP 429)
   cleanup_interval: 1m         # Frequency to purge inactive local fallback memory
   redis:
     addr: "127.0.0.1:6379"

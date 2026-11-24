@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -51,6 +52,7 @@ end
 
 // RedisLimiter implements distributed per-IP rate limiting backed by Redis.
 type RedisLimiter struct {
+	cfgMu       sync.RWMutex
 	client      *redis.Client
 	script      *redis.Script
 	rate        float64
@@ -137,6 +139,24 @@ func (r *RedisLimiter) healthProbeLoop(addr string) {
 	}
 }
 
+// SetRateAndBurst dynamically updates the rate and burst parameters for Redis and fallback.
+func (r *RedisLimiter) SetRateAndBurst(rate float64, burst int) {
+	r.cfgMu.Lock()
+	defer r.cfgMu.Unlock()
+	r.rate = rate
+	r.burst = float64(burst)
+	if r.fallback != nil {
+		r.fallback.SetRateAndBurst(rate, burst)
+	}
+}
+
+// GetRateAndBurst returns the current rate and burst values.
+func (r *RedisLimiter) GetRateAndBurst() (float64, int) {
+	r.cfgMu.RLock()
+	defer r.cfgMu.RUnlock()
+	return r.rate, int(r.burst)
+}
+
 // Strategy returns "redis" when healthy, or "redis (fallback: memory)" when offline.
 func (r *RedisLimiter) Strategy() string {
 	if r.healthy.Load() {
@@ -161,13 +181,18 @@ func (r *RedisLimiter) AllowN(ip string, n float64) bool {
 		return r.fallback.AllowN(ip, n)
 	}
 
+	r.cfgMu.RLock()
+	burst := r.burst
+	rate := r.rate
+	r.cfgMu.RUnlock()
+
 	key := fmt.Sprintf("ratelimit:%s", ip)
 	now := float64(time.Now().UnixNano()) / 1e9
 
 	ctx, cancel := context.WithTimeout(context.Background(), r.timeout)
 	defer cancel()
 
-	res, err := r.script.Run(ctx, r.client, []string{key}, r.burst, r.rate, now, n).Int64()
+	res, err := r.script.Run(ctx, r.client, []string{key}, burst, rate, now, n).Int64()
 	if err != nil {
 		// Log error and transparently fallback to avoid blocking valid traffic
 		r.healthy.Store(false)

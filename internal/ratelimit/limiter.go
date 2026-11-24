@@ -6,6 +6,8 @@ import "github.com/WilliamPscheidt/reverse-proxy-go/internal/config"
 type Limiter interface {
 	Allow(ip string) bool
 	AllowN(ip string, n float64) bool
+	SetRateAndBurst(rate float64, burst int)
+	GetRateAndBurst() (float64, int)
 	Close()
 	Strategy() string
 	IsHealthy() bool
