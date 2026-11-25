@@ -7,6 +7,9 @@ mode: "both"
 admin:
   enabled: true
   listen: ":8090"
+  auth_enabled: true
+  username: "admin"
+  password: "admin123"
 
 # L7 HTTP Reverse Proxy Configuration
 l7:

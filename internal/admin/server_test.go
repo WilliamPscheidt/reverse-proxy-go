@@ -318,3 +318,113 @@ func TestAdmin_WAF_Cache_Routes_APIs(t *testing.T) {
 		t.Fatalf("expected 200 OK for /api/stream/history, got %d", rec.Code)
 	}
 }
+
+func TestAdmin_AuthAndSessionFlow(t *testing.T) {
+	srv, _, _ := setupTestAdminServer()
+	srv.cfg.Admin.AuthEnabled = true
+	srv.cfg.Admin.Username = "admin"
+	srv.cfg.Admin.Password = "admin123"
+
+	// 1. Unauthenticated request to / should redirect to /login
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rec := httptest.NewRecorder()
+	srv.httpServer.Handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusFound {
+		t.Fatalf("expected 302 Found, got %d", rec.Code)
+	}
+	if loc := rec.Header().Get("Location"); loc != "/login" {
+		t.Fatalf("expected redirect to /login, got %s", loc)
+	}
+
+	// 2. Unauthenticated request to /api/status should return 401
+	req = httptest.NewRequest(http.MethodGet, "/api/status", nil)
+	rec = httptest.NewRecorder()
+	srv.httpServer.Handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 Unauthorized for /api/status, got %d", rec.Code)
+	}
+
+	// 3. GET /login should return 200 OK with login HTML
+	req = httptest.NewRequest(http.MethodGet, "/login", nil)
+	rec = httptest.NewRecorder()
+	srv.httpServer.Handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK for /login, got %d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "ProxyGO Enterprise Console") {
+		t.Fatal("login page missing expected title")
+	}
+
+	// 4. Invalid POST to /api/login should fail
+	invalidBody := `{"username":"admin","password":"wrongpassword"}`
+	req = httptest.NewRequest(http.MethodPost, "/api/login", strings.NewReader(invalidBody))
+	req.Header.Set("Content-Type", "application/json")
+	rec = httptest.NewRecorder()
+	srv.httpServer.Handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 Unauthorized for bad login, got %d", rec.Code)
+	}
+
+	// 5. Valid POST to /api/login should succeed and set proxygo_session cookie
+	validBody := `{"username":"admin","password":"admin123"}`
+	req = httptest.NewRequest(http.MethodPost, "/api/login", strings.NewReader(validBody))
+	req.Header.Set("Content-Type", "application/json")
+	rec = httptest.NewRecorder()
+	srv.httpServer.Handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK for valid login, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var sessionCookie *http.Cookie
+	for _, cookie := range rec.Result().Cookies() {
+		if cookie.Name == "proxygo_session" {
+			sessionCookie = cookie
+			break
+		}
+	}
+	if sessionCookie == nil || sessionCookie.Value == "" {
+		t.Fatal("expected proxygo_session cookie to be set")
+	}
+
+	// 6. Access / with session cookie -> 200 OK
+	req = httptest.NewRequest(http.MethodGet, "/", nil)
+	req.AddCookie(sessionCookie)
+	rec = httptest.NewRecorder()
+	srv.httpServer.Handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK for authenticated dashboard request, got %d", rec.Code)
+	}
+
+	// 7. Check /api/me with session cookie
+	req = httptest.NewRequest(http.MethodGet, "/api/me", nil)
+	req.AddCookie(sessionCookie)
+	rec = httptest.NewRecorder()
+	srv.httpServer.Handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK for /api/me, got %d", rec.Code)
+	}
+	var meResp map[string]any
+	_ = json.Unmarshal(rec.Body.Bytes(), &meResp)
+	if meResp["username"] != "admin" {
+		t.Fatalf("expected username admin in /api/me, got %v", meResp["username"])
+	}
+
+	// 8. Logout via /api/logout
+	req = httptest.NewRequest(http.MethodPost, "/api/logout", strings.NewReader("{}"))
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(sessionCookie)
+	rec = httptest.NewRecorder()
+	srv.httpServer.Handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK for /api/logout, got %d", rec.Code)
+	}
+
+	// 9. After logout, session is invalid -> GET / redirects to /login
+	req = httptest.NewRequest(http.MethodGet, "/", nil)
+	req.AddCookie(sessionCookie)
+	rec = httptest.NewRecorder()
+	srv.httpServer.Handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusFound {
+		t.Fatalf("expected 302 Found after logout, got %d", rec.Code)
+	}
+}

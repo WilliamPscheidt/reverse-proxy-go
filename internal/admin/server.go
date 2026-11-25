@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/WilliamPscheidt/reverse-proxy-go/internal/analytics"
@@ -39,6 +40,8 @@ type Server struct {
 	streamBroker    *stream.StreamBroker
 	httpServer      *http.Server
 	startTime       time.Time
+	sessionsMu      sync.RWMutex
+	sessions        map[string]SessionData
 }
 
 // NewServer creates a new Admin Server instance.
@@ -60,6 +63,7 @@ func NewServer(
 		analytics:   a,
 		blacklist:   bl,
 		startTime:   time.Now(),
+		sessions:    make(map[string]SessionData),
 	}
 
 	if l7 != nil {
@@ -75,6 +79,12 @@ func NewServer(
 	// Web UI
 	mux.HandleFunc("/", s.handleDashboard)
 	mux.HandleFunc("/admin", s.handleDashboard)
+	mux.HandleFunc("/login", s.handleLoginPage)
+
+	// REST API - Auth & Session
+	mux.HandleFunc("/api/login", s.handleAPILogin)
+	mux.HandleFunc("/api/logout", s.handleAPILogout)
+	mux.HandleFunc("/api/me", s.handleAPIMe)
 
 	// REST API
 	mux.HandleFunc("/api/status", s.handleAPIStatus)
@@ -114,13 +124,29 @@ func NewServer(
 // authMiddleware enforces authentication if enabled in configuration.
 func (s *Server) authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path := r.URL.Path
+
+		// Public assets and authentication routes that do not require auth
+		if path == "/login" || path == "/api/login" || path == "/favicon.ico" {
+			next.ServeHTTP(w, r)
+			return
+		}
+
 		// If auth is disabled, allow all
 		if !s.cfg.Admin.AuthEnabled && s.cfg.Admin.Password == "" && s.cfg.Admin.APIKey == "" {
 			next.ServeHTTP(w, r)
 			return
 		}
 
-		// 1. Check API Key (X-API-Key or Bearer token)
+		// 1. Check Session Cookie (Web UI login)
+		if cookie, err := r.Cookie("proxygo_session"); err == nil && cookie.Value != "" {
+			if _, ok := s.validateSession(cookie.Value); ok {
+				next.ServeHTTP(w, r)
+				return
+			}
+		}
+
+		// 2. Check API Key (X-API-Key or Bearer token)
 		if s.cfg.Admin.APIKey != "" {
 			if key := r.Header.Get("X-API-Key"); key == s.cfg.Admin.APIKey {
 				next.ServeHTTP(w, r)
@@ -134,7 +160,7 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 			}
 		}
 
-		// 2. Check Basic Auth (username & password)
+		// 3. Check Basic Auth (username & password)
 		if s.cfg.Admin.Password != "" {
 			u, p, ok := r.BasicAuth()
 			expectedUser := s.cfg.Admin.Username
@@ -147,8 +173,19 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 			}
 		}
 
-		w.Header().Set("WWW-Authenticate", `Basic realm="ProxyGO Admin Console"`)
-		http.Error(w, "Unauthorized: valid credentials required", http.StatusUnauthorized)
+		// Not authenticated:
+		// If it's an API request, return 401 JSON
+		if strings.HasPrefix(path, "/api/") {
+			w.Header().Set("Content-Type", "application/json; charset=utf-8")
+			w.WriteHeader(http.StatusUnauthorized)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"error": "Unauthorized: autenticação necessária",
+			})
+			return
+		}
+
+		// If it's a browser requesting HTML page, redirect to /login
+		http.Redirect(w, r, "/login", http.StatusFound)
 	})
 }
 

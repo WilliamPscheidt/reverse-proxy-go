@@ -814,9 +814,17 @@ const dashboardHTML = `<!DOCTYPE html>
           <span class="status-dot"></span>
           <span id="uptimeBadge">Uptime: --</span>
         </div>
+        <div class="status-pill" id="userBadgePill" style="display: none; background: rgba(59, 130, 246, 0.1); border-color: rgba(59, 130, 246, 0.3); color: #93c5fd; font-weight: 500;">
+          <i class="fa-solid fa-user-shield" style="color: #60a5fa;"></i>
+          <span id="currentUsername">admin</span>
+        </div>
         <button onclick="fetchStatus()" class="btn btn-secondary">
           <i class="fa-solid fa-arrows-rotate"></i>
           Atualizar
+        </button>
+        <button onclick="logoutAdmin()" class="btn btn-secondary" title="Sair da sessão administrativa" style="border-color: rgba(239, 68, 68, 0.3); color: #f87171;">
+          <i class="fa-solid fa-arrow-right-from-bracket"></i>
+          Sair
         </button>
       </div>
     </header>
@@ -2843,8 +2851,39 @@ const dashboardHTML = `<!DOCTYPE html>
       }
     }
 
+    /* --- Auth & Session Logic --- */
+    async function checkAuthUser() {
+      try {
+        const res = await fetch('/api/me');
+        if (res.ok) {
+          const data = await res.json();
+          if (data && data.username) {
+            const pill = document.getElementById('userBadgePill');
+            const nameEl = document.getElementById('currentUsername');
+            if (pill && nameEl) {
+              nameEl.innerText = data.username;
+              pill.style.display = 'inline-flex';
+            }
+          }
+        }
+      } catch (err) {}
+    }
+
+    async function logoutAdmin() {
+      if (!confirm('Deseja realmente encerrar a sessão?')) return;
+      try {
+        await fetch('/api/logout', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({})
+        });
+      } catch (err) {}
+      window.location.href = '/login';
+    }
+
     // Initialize map on start
     window.addEventListener('DOMContentLoaded', () => {
+      checkAuthUser();
       initMap();
       initEventStream();
       fetchStatus();
