@@ -44,10 +44,10 @@ services:
       context: .
       dockerfile: Dockerfile
     ports:
-      - "8080:8080" # L7 HTTP Proxy
-      - "9000:9000" # L4 TCP Proxy
-      - "8090:8090" # Web Admin Dashboard & API
-      - "2112:2112" # Prometheus Metrics
+      - "8080:8080" # L7 HTTP Proxy (public)
+      - "9000:9000" # L4 TCP Proxy (public)
+      - "127.0.0.1:8090:8090" # Web Admin Dashboard & API (localhost only)
+      - "127.0.0.1:2112:2112" # Prometheus Metrics (localhost only)
     volumes:
       - ./config/docker-config.yaml:/app/config.yaml:ro
     command: ["/app/proxy", "-config", "/app/config.yaml"]
@@ -63,8 +63,8 @@ services:
   redis:
     image: redis:7-alpine
     ports:
-      - "6379:6379"
-    command: ["redis-server", "--appendonly", "no", "--save", ""]
+      - "127.0.0.1:6379:6379" # Bind to localhost only
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:-proxygo_secure_redis_pass}", "--appendonly", "no", "--save", ""]
     networks:
       - proxy-net
 

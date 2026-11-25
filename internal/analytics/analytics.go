@@ -187,9 +187,18 @@ func (a *Analytics) RecordRequest(clientIP string, statusCode int) {
 		a.total5xx++
 	}
 
-	// 5. Track client IP
-	cleanIP := sanitizeIP(clientIP)
-	a.clientIPs[cleanIP]++
+	// 5. Track client IP (validated with net.ParseIP and bounded to max 5000 items to prevent memory exhaustion)
+	parsed := net.ParseIP(sanitizeIP(clientIP))
+	if parsed == nil {
+		return
+	}
+	cleanIP := parsed.String()
+
+	if len(a.clientIPs) < 5000 {
+		a.clientIPs[cleanIP]++
+	} else if _, exists := a.clientIPs[cleanIP]; exists {
+		a.clientIPs[cleanIP]++
+	}
 
 	// 6. Map to geographic region
 	geoKey := resolveGeoRegion(cleanIP)
@@ -200,10 +209,14 @@ func (a *Analytics) RecordRequest(clientIP string, statusCode int) {
 		}
 		rip, ok := geo.IPMap[cleanIP]
 		if !ok {
-			rip = &RegionIP{IP: cleanIP}
-			geo.IPMap[cleanIP] = rip
+			if len(geo.IPMap) < 1000 {
+				rip = &RegionIP{IP: cleanIP}
+				geo.IPMap[cleanIP] = rip
+			}
 		}
-		rip.Count++
+		if rip != nil {
+			rip.Count++
+		}
 	}
 }
 

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -98,12 +99,91 @@ func NewServer(
 	mux.HandleFunc("/api/routes/canary", s.handleAPIRoutesCanary)
 	mux.HandleFunc("/api/circuit-breakers", s.handleAPICircuitBreakers)
 
+	var handler http.Handler = mux
+	handler = s.csrfMiddleware(handler)
+	handler = s.authMiddleware(handler)
+
 	s.httpServer = &http.Server{
 		Addr:    cfg.Admin.Listen,
-		Handler: mux,
+		Handler: handler,
 	}
 
 	return s
+}
+
+// authMiddleware enforces authentication if enabled in configuration.
+func (s *Server) authMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// If auth is disabled, allow all
+		if !s.cfg.Admin.AuthEnabled && s.cfg.Admin.Password == "" && s.cfg.Admin.APIKey == "" {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		// 1. Check API Key (X-API-Key or Bearer token)
+		if s.cfg.Admin.APIKey != "" {
+			if key := r.Header.Get("X-API-Key"); key == s.cfg.Admin.APIKey {
+				next.ServeHTTP(w, r)
+				return
+			}
+			if auth := r.Header.Get("Authorization"); strings.HasPrefix(auth, "Bearer ") {
+				if strings.TrimPrefix(auth, "Bearer ") == s.cfg.Admin.APIKey {
+					next.ServeHTTP(w, r)
+					return
+				}
+			}
+		}
+
+		// 2. Check Basic Auth (username & password)
+		if s.cfg.Admin.Password != "" {
+			u, p, ok := r.BasicAuth()
+			expectedUser := s.cfg.Admin.Username
+			if expectedUser == "" {
+				expectedUser = "admin"
+			}
+			if ok && u == expectedUser && p == s.cfg.Admin.Password {
+				next.ServeHTTP(w, r)
+				return
+			}
+		}
+
+		w.Header().Set("WWW-Authenticate", `Basic realm="ProxyGO Admin Console"`)
+		http.Error(w, "Unauthorized: valid credentials required", http.StatusUnauthorized)
+	})
+}
+
+// csrfMiddleware protects state-changing endpoints from Cross-Site Request Forgery.
+func (s *Server) csrfMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Only check state-changing methods
+		if r.Method == http.MethodPost || r.Method == http.MethodPut || r.Method == http.MethodDelete || r.Method == http.MethodPatch {
+			// 1. Block Sec-Fetch-Site: cross-site
+			if sfs := r.Header.Get("Sec-Fetch-Site"); sfs == "cross-site" {
+				http.Error(w, "Forbidden: Cross-site request rejected (Sec-Fetch-Site)", http.StatusForbidden)
+				return
+			}
+
+			// 2. If Origin header is present, ensure it matches request host
+			if origin := r.Header.Get("Origin"); origin != "" {
+				u, err := url.Parse(origin)
+				if err != nil || (!strings.EqualFold(u.Host, r.Host) && !strings.HasPrefix(r.Host, "localhost:") && !strings.HasPrefix(r.Host, "127.0.0.1:")) {
+					http.Error(w, "Forbidden: Cross-origin request rejected", http.StatusForbidden)
+					return
+				}
+			}
+
+			// 3. For /api/* routes, require Content-Type: application/json
+			if strings.HasPrefix(r.URL.Path, "/api/") {
+				ct := r.Header.Get("Content-Type")
+				if ct != "" && !strings.Contains(strings.ToLower(ct), "application/json") {
+					http.Error(w, "Unsupported Media Type: Content-Type must be application/json", http.StatusUnsupportedMediaType)
+					return
+				}
+			}
+		}
+
+		next.ServeHTTP(w, r)
+	})
 }
 
 // Start begins listening on the admin port.
@@ -243,7 +323,19 @@ func (s *Server) handleAPIConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	_ = json.NewEncoder(w).Encode(s.cfg)
+
+	// Redact sensitive secrets before exposing configuration
+	safeCfg := *s.cfg
+	if safeCfg.RateLimit.Redis.Password != "" {
+		safeCfg.RateLimit.Redis.Password = "******"
+	}
+	if safeCfg.Admin.Password != "" {
+		safeCfg.Admin.Password = "******"
+	}
+	if safeCfg.Admin.APIKey != "" {
+		safeCfg.Admin.APIKey = "******"
+	}
+	_ = json.NewEncoder(w).Encode(safeCfg)
 }
 
 func (s *Server) handleAPIBackends(w http.ResponseWriter, r *http.Request) {

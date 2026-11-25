@@ -50,7 +50,7 @@ rate_limit:
   cleanup_interval: 1m
   redis:
     addr: "redis:6379"
-    password: ""
+    password: "proxygo_secure_redis_pass"
     db: 0
     timeout: 150ms
     pool_size: 100

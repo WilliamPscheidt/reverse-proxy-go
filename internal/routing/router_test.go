@@ -208,3 +208,32 @@ func TestRouter_PathRewriteAndStripPrefix(t *testing.T) {
 		t.Fatalf("Expected path /auth/login, got %s", req3.URL.Path)
 	}
 }
+
+func TestRouter_PathPrefixBoundary(t *testing.T) {
+	router := NewRouter("default-pool")
+	router.AddRoute(RouteConfig{
+		ID:         "teste-route",
+		PathPrefix: "/teste",
+	}, "test-pool", nil)
+
+	// /teste matches
+	req1, _ := http.NewRequest("GET", "http://localhost:8080/teste", nil)
+	_, _, _, matched1 := router.Match(req1)
+	if !matched1 {
+		t.Fatal("Expected /teste to match /teste route")
+	}
+
+	// /teste/123 matches
+	req2, _ := http.NewRequest("GET", "http://localhost:8080/teste/123", nil)
+	_, _, _, matched2 := router.Match(req2)
+	if !matched2 {
+		t.Fatal("Expected /teste/123 to match /teste route")
+	}
+
+	// /testeXYZ MUST NOT match /teste route!
+	req3, _ := http.NewRequest("GET", "http://localhost:8080/testeXYZ", nil)
+	_, _, _, matched3 := router.Match(req3)
+	if matched3 {
+		t.Fatal("Boundary vulnerability: /testeXYZ incorrectly matched /teste route!")
+	}
+}

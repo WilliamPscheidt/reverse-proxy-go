@@ -1720,6 +1720,16 @@ const dashboardHTML = `<!DOCTYPE html>
   </div>
 
   <script>
+    function escapeHTML(str) {
+      if (str === null || str === undefined) return '';
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
     let vectorMap = null;
     let activeGeoLocations = [];
     let currentModalRegion = null;
@@ -1952,12 +1962,14 @@ const dashboardHTML = `<!DOCTYPE html>
                 ? '<span class="badge badge-offline"><i class="fa-solid fa-ban" style="font-size: 8px;"></i> Blacklist</span>'
                 : '<span class="badge badge-online"><i class="fa-solid fa-circle" style="font-size: 6px;"></i> Permitido</span>';
 
+              const cleanIP = encodeURIComponent(ip.ip);
+              const safeIP = escapeHTML(ip.ip);
               const actionBtn = ip.blacklisted
-                ? '<button onclick="unblockIP(\'' + ip.ip + '\')" class="btn btn-secondary btn-sm" style="color: #34d399; font-size: 11px; padding: 2px 7px;" title="Desbloquear"><i class="fa-solid fa-shield"></i> Desbloquear</button>'
-                : '<button onclick="blockIP(\'' + ip.ip + '\')" class="btn btn-danger btn-sm" style="font-size: 11px; padding: 2px 7px;" title="Bloquear IP com HTTP 403"><i class="fa-solid fa-ban"></i> Bloquear</button>';
+                ? '<button onclick="unblockIP(\'' + cleanIP + '\')" class="btn btn-secondary btn-sm" style="color: #34d399; font-size: 11px; padding: 2px 7px;" title="Desbloquear"><i class="fa-solid fa-shield"></i> Desbloquear</button>'
+                : '<button onclick="blockIP(\'' + cleanIP + '\')" class="btn btn-danger btn-sm" style="font-size: 11px; padding: 2px 7px;" title="Bloquear IP com HTTP 403"><i class="fa-solid fa-ban"></i> Bloquear</button>';
 
               html += '<tr>' +
-                '<td><strong class="mono" style="color: #fff;">' + ip.ip + '</strong></td>' +
+                '<td><strong class="mono" style="color: #fff;">' + safeIP + '</strong></td>' +
                 '<td class="mono">' + ip.count.toLocaleString() + '</td>' +
                 '<td>' + statusBadge + '</td>' +
                 '<td style="text-align: right;">' + actionBtn + '</td>' +
@@ -2219,12 +2231,14 @@ const dashboardHTML = `<!DOCTYPE html>
           ? '<span class="badge badge-offline"><i class="fa-solid fa-ban" style="font-size: 8px;"></i> Blacklist (403)</span>'
           : '<span class="badge badge-online"><i class="fa-solid fa-circle" style="font-size: 6px;"></i> Permitido</span>';
 
+        const cleanIP = encodeURIComponent(item.ip);
+        const safeIP = escapeHTML(item.ip);
         const actionBtn = item.blacklisted
-          ? '<button onclick="unblockIP(\'' + item.ip + '\')" class="btn btn-secondary btn-sm" style="color: #34d399; border-color: rgba(16, 185, 129, 0.4);" title="Permitir acesso"><i class="fa-solid fa-shield"></i> Desbloquear</button>'
-          : '<button onclick="blockIP(\'' + item.ip + '\')" class="btn btn-danger btn-sm" title="Bloquear IP com HTTP 403"><i class="fa-solid fa-ban"></i> Bloquear (Blacklist)</button>';
+          ? '<button onclick="unblockIP(\'' + cleanIP + '\')" class="btn btn-secondary btn-sm" style="color: #34d399; border-color: rgba(16, 185, 129, 0.4);" title="Permitir acesso"><i class="fa-solid fa-shield"></i> Desbloquear</button>'
+          : '<button onclick="blockIP(\'' + cleanIP + '\')" class="btn btn-danger btn-sm" title="Bloquear IP com HTTP 403"><i class="fa-solid fa-ban"></i> Bloquear (Blacklist)</button>';
 
         html += '<tr>' +
-          '<td><strong class="mono" style="color: #fff;">' + item.ip + '</strong></td>' +
+          '<td><strong class="mono" style="color: #fff;">' + safeIP + '</strong></td>' +
           '<td class="mono">' + item.count.toLocaleString() + ' reqs</td>' +
           '<td>' + statusBadge + '</td>' +
           '<td style="text-align: right;">' + actionBtn + '</td>' +
@@ -2313,12 +2327,14 @@ const dashboardHTML = `<!DOCTYPE html>
         let html = '';
         list.forEach(entry => {
           const dateStr = entry.created_at ? new Date(entry.created_at).toLocaleTimeString() : 'Recentemente';
+          const cleanIP = encodeURIComponent(entry.ip);
+          const safeIP = escapeHTML(entry.ip);
           html += '<tr>' +
-            '<td><strong class="mono" style="color: #f87171;"><i class="fa-solid fa-ban" style="font-size: 10px; margin-right: 6px;"></i>' + entry.ip + '</strong></td>' +
-            '<td style="color: var(--text-muted);">' + (entry.reason || 'Bloqueado') + '</td>' +
-            '<td class="mono" style="color: var(--text-muted);">' + dateStr + '</td>' +
+            '<td><strong class="mono" style="color: #f87171;"><i class="fa-solid fa-ban" style="font-size: 10px; margin-right: 6px;"></i>' + safeIP + '</strong></td>' +
+            '<td style="color: var(--text-muted);">' + escapeHTML(entry.reason || 'Bloqueado') + '</td>' +
+            '<td class="mono" style="color: var(--text-muted);">' + escapeHTML(dateStr) + '</td>' +
             '<td style="text-align: right;">' +
-              '<button onclick="unblockIP(\'' + entry.ip + '\')" class="btn btn-secondary btn-sm" style="color: #34d399;" title="Desbloquear"><i class="fa-solid fa-shield"></i> Desbloquear</button>' +
+              '<button onclick="unblockIP(\'' + cleanIP + '\')" class="btn btn-secondary btn-sm" style="color: #34d399;" title="Desbloquear"><i class="fa-solid fa-shield"></i> Desbloquear</button>' +
             '</td>' +
           '</tr>';
         });
@@ -2400,22 +2416,22 @@ const dashboardHTML = `<!DOCTYPE html>
         else if (evt.status_code >= 400 && evt.status_code < 500) statusClass = 'status-4xx';
         else if (evt.status_code >= 500) statusClass = 'status-5xx';
 
-        let upstreamBadge = '<span class="mono">' + (evt.upstream || '-') + '</span>';
+        let upstreamBadge = '<span class="mono">' + escapeHTML(evt.upstream || '-') + '</span>';
         if (evt.cache_hit) {
           upstreamBadge = '<span class="badge" style="background: rgba(16, 185, 129, 0.2); color: #34d399; font-weight: 700;"><i class="fa-solid fa-bolt"></i> CACHE HIT</span>';
         } else if (evt.waf_blocked) {
-          upstreamBadge = '<span class="badge" style="background: rgba(239, 68, 68, 0.2); color: #f87171; font-weight: 700;"><i class="fa-solid fa-shield-virus"></i> WAF [' + (evt.waf_rule || 'BLOCK') + ']</span>';
+          upstreamBadge = '<span class="badge" style="background: rgba(239, 68, 68, 0.2); color: #f87171; font-weight: 700;"><i class="fa-solid fa-shield-virus"></i> WAF [' + escapeHTML(evt.waf_rule || 'BLOCK') + ']</span>';
         }
 
         tr.innerHTML = 
-          '<td class="mono" style="color: var(--text-muted);">' + timeStr + '</td>' +
-          '<td><span class="method-badge method-' + method + '">' + (evt.method || 'GET') + '</span></td>' +
-          '<td class="mono" style="font-weight: 500; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">' + (evt.path || '/') + '</td>' +
+          '<td class="mono" style="color: var(--text-muted);">' + escapeHTML(timeStr) + '</td>' +
+          '<td><span class="method-badge method-' + escapeHTML(method) + '">' + escapeHTML(evt.method || 'GET') + '</span></td>' +
+          '<td class="mono" style="font-weight: 500; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">' + escapeHTML(evt.path || '/') + '</td>' +
           '<td><span class="status-pill ' + statusClass + '">' + (evt.status_code || 200) + '</span></td>' +
           '<td class="mono" style="color: #94a3b8;">' + (evt.duration_ms || 0.1).toFixed(2) + 'ms</td>' +
-          '<td>${upstreamBadge}</td>' +
-          '<td class="mono">' + (evt.client_ip || '127.0.0.1') + '</td>' +
-          '<td><span class="badge badge-protocol">' + (evt.country || 'US') + '</span></td>';
+          '<td>' + upstreamBadge + '</td>' +
+          '<td class="mono">' + escapeHTML(evt.client_ip || '127.0.0.1') + '</td>' +
+          '<td><span class="badge badge-protocol">' + escapeHTML(evt.country || 'US') + '</span></td>';
 
         frag.appendChild(tr);
       }
@@ -2518,23 +2534,25 @@ const dashboardHTML = `<!DOCTYPE html>
         }
         tbody.innerHTML = cachedRoutes.map(r => {
           const cfg = r.config;
-          const hostDisplay = (cfg.host && cfg.host !== '*') ? '<span class="badge" style="background: rgba(99, 102, 241, 0.15); color: #818cf8; font-weight: 600;">' + cfg.host + '</span>' : '<span style="color: var(--text-muted);">* (qualquer)</span>';
-          let pathDisplay = '<span class="mono" style="color: #60a5fa; font-weight: 600;">' + (cfg.path_prefix || '/') + '</span>';
+          const hostDisplay = (cfg.host && cfg.host !== '*') ? '<span class="badge" style="background: rgba(99, 102, 241, 0.15); color: #818cf8; font-weight: 600;">' + escapeHTML(cfg.host) + '</span>' : '<span style="color: var(--text-muted);">* (qualquer)</span>';
+          let pathDisplay = '<span class="mono" style="color: #60a5fa; font-weight: 600;">' + escapeHTML(cfg.path_prefix || '/') + '</span>';
           if (cfg.rewrite_prefix) {
-            pathDisplay += ' <span style="color: #a78bfa; font-size: 11px; font-weight: 500;">➔ ' + cfg.rewrite_prefix + '</span>';
+            pathDisplay += ' <span style="color: #a78bfa; font-size: 11px; font-weight: 500;">➔ ' + escapeHTML(cfg.rewrite_prefix) + '</span>';
           }
           if (cfg.strip_prefix) {
             pathDisplay += ' <span class="badge" style="background: rgba(245, 158, 11, 0.15); color: #fbbf24; font-size: 10px; margin-left: 4px;">strip</span>';
           }
           let destDisplay = '<span style="color: var(--text-muted); font-size: 12px;">Pool Padrão L7</span>';
           if (cfg.backends && cfg.backends.length) {
-            destDisplay = '<span class="mono" style="color: #34d399; font-size: 12px; font-weight: 500;">' + cfg.backends.join(', ') + '</span>';
+            destDisplay = '<span class="mono" style="color: #34d399; font-size: 12px; font-weight: 500;">' + escapeHTML(cfg.backends.join(', ')) + '</span>';
           }
-          const methodsDisplay = (cfg.methods && cfg.methods.length) ? cfg.methods.join(', ') : 'ALL';
+          const methodsDisplay = (cfg.methods && cfg.methods.length) ? escapeHTML(cfg.methods.join(', ')) : 'ALL';
           const canaryDisplay = '<span class="badge" style="background: rgba(16, 185, 129, 0.15); color: #34d399; font-weight: 600;">' + (cfg.canary_weight || 0) + '%</span>';
+          const cleanID = encodeURIComponent(cfg.id);
+          const safeID = escapeHTML(cfg.id);
 
           return '<tr>' +
-            '<td class="mono" style="font-weight: 600; color: #fff;">' + cfg.id + '</td>' +
+            '<td class="mono" style="font-weight: 600; color: #fff;">' + safeID + '</td>' +
             '<td class="mono">' + hostDisplay + '</td>' +
             '<td>' + pathDisplay + '</td>' +
             '<td>' + destDisplay + '</td>' +
@@ -2543,8 +2561,8 @@ const dashboardHTML = `<!DOCTYPE html>
             '<td class="mono">' + (r.total_hits || 0) + '</td>' +
             '<td class="mono" style="color: #34d399;">' + (r.canary_hits || 0) + '</td>' +
             '<td style="text-align: right; white-space: nowrap;">' +
-              '<button onclick="editRouteModal(\'' + cfg.id + '\')" class="btn btn-secondary btn-sm" title="Editar Rota" style="padding: 4px 8px; font-size: 11px; margin-right: 6px;"><i class="fa-solid fa-pen"></i></button>' +
-              '<button onclick="deleteRouteConfirm(\'' + cfg.id + '\')" class="btn btn-danger btn-sm" title="Excluir Rota" style="padding: 4px 8px; font-size: 11px;"><i class="fa-solid fa-trash"></i></button>' +
+              '<button onclick="editRouteModal(\'' + cleanID + '\')" class="btn btn-secondary btn-sm" title="Editar Rota" style="padding: 4px 8px; font-size: 11px; margin-right: 6px;"><i class="fa-solid fa-pen"></i></button>' +
+              '<button onclick="deleteRouteConfirm(\'' + cleanID + '\')" class="btn btn-danger btn-sm" title="Excluir Rota" style="padding: 4px 8px; font-size: 11px;"><i class="fa-solid fa-trash"></i></button>' +
             '</td>' +
           '</tr>';
         }).join('');

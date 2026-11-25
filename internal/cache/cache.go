@@ -34,11 +34,12 @@ func DefaultCacheConfig() CacheConfig {
 
 // CachedResponse stores the intercepted response payload and headers.
 type CachedResponse struct {
-	StatusCode int                 `json:"status_code"`
-	Headers    map[string][]string `json:"headers"`
-	Body       []byte              `json:"body"`
-	ETag       string              `json:"etag"`
-	ExpiresAt  time.Time           `json:"expires_at"`
+	StatusCode   int                 `json:"status_code"`
+	Headers      map[string][]string `json:"headers"`
+	Body         []byte              `json:"body"`
+	ETag         string              `json:"etag"`
+	ExpiresAt    time.Time           `json:"expires_at"`
+	LastAccessed time.Time           `json:"last_accessed"`
 }
 
 // CacheStats provides live telemetry for the dashboard.
@@ -140,6 +141,17 @@ func (c *Cache) Get(r *http.Request) (*CachedResponse, bool) {
 
 	if found {
 		if now.Before(item.ExpiresAt) {
+			// RFC 7234: If incoming request has Cookie or Authorization, only serve if cached response is public
+			if r.Header.Get("Cookie") != "" || r.Header.Get("Authorization") != "" {
+				resCC := ""
+				if len(item.Headers["Cache-Control"]) > 0 {
+					resCC = item.Headers["Cache-Control"][0]
+				}
+				if !strings.Contains(resCC, "public") {
+					return nil, false
+				}
+			}
+			item.LastAccessed = now
 			atomic.AddUint64(&c.hits, 1)
 			return item, true
 		}
@@ -158,6 +170,17 @@ func (c *Cache) Get(r *http.Request) (*CachedResponse, bool) {
 		if err == nil {
 			var cached CachedResponse
 			if json.Unmarshal(val, &cached) == nil && now.Before(cached.ExpiresAt) {
+				// RFC 7234 check for Redis hit
+				if r.Header.Get("Cookie") != "" || r.Header.Get("Authorization") != "" {
+					resCC := ""
+					if len(cached.Headers["Cache-Control"]) > 0 {
+						resCC = cached.Headers["Cache-Control"][0]
+					}
+					if !strings.Contains(resCC, "public") {
+						return nil, false
+					}
+				}
+				cached.LastAccessed = now
 				// Populate local memory
 				c.mu.Lock()
 				c.items[key] = &cached
@@ -184,8 +207,15 @@ func (c *Cache) Put(r *http.Request, statusCode int, headers http.Header, body [
 		return
 	}
 
-	// RFC 7234: If request had Authorization, do not cache unless Cache-Control: public
-	if r.Header.Get("Authorization") != "" && !strings.Contains(resCC, "public") {
+	// RFC 7234: If request had Cookie or Authorization, do NOT cache unless response explicitly specifies Cache-Control: public
+	hasCredentials := r.Header.Get("Cookie") != "" || r.Header.Get("Authorization") != ""
+	if hasCredentials && !strings.Contains(resCC, "public") {
+		return
+	}
+
+	// Respect Vary: *
+	vary := headers.Get("Vary")
+	if vary != "" && (vary == "*" || strings.Contains(vary, "*")) {
 		return
 	}
 
@@ -230,20 +260,43 @@ func (c *Cache) Put(r *http.Request, statusCode int, headers http.Header, body [
 		headerMap[k] = v
 	}
 
+	now := time.Now()
 	cached := &CachedResponse{
-		StatusCode: statusCode,
-		Headers:    headerMap,
-		Body:       body,
-		ETag:       etag,
-		ExpiresAt:  time.Now().Add(ttl),
+		StatusCode:   statusCode,
+		Headers:      headerMap,
+		Body:         body,
+		ETag:         etag,
+		ExpiresAt:    now.Add(ttl),
+		LastAccessed: now,
 	}
 
 	key := c.CacheKey(r)
 
 	c.mu.Lock()
-	if len(c.items) < c.cfg.MaxEntries {
-		c.items[key] = cached
+	if len(c.items) >= c.cfg.MaxEntries {
+		var oldestKey string
+		var oldestTime time.Time
+		evicted := false
+
+		// 1. Try to find and delete an expired entry first
+		for k, v := range c.items {
+			if now.After(v.ExpiresAt) {
+				delete(c.items, k)
+				evicted = true
+				break
+			}
+			if oldestKey == "" || v.LastAccessed.Before(oldestTime) {
+				oldestKey = k
+				oldestTime = v.LastAccessed
+			}
+		}
+
+		// 2. If no expired entry was found, evict the least recently accessed (LRU)
+		if !evicted && oldestKey != "" {
+			delete(c.items, oldestKey)
+		}
 	}
+	c.items[key] = cached
 	c.mu.Unlock()
 
 	// Persist in Redis asynchronously

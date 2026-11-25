@@ -43,6 +43,7 @@ const (
 type L7Server struct {
 	mu              sync.RWMutex
 	config          config.L7Config
+	trustedProxies  []*net.IPNet
 	pool            *BackendPool
 	canaryPool      *BackendPool
 	balancer        BalancerInterface
@@ -116,6 +117,7 @@ func NewL7Server(
 		metrics:     m,
 		transport:   transport,
 	}
+	s.compileTrustedProxies(cfg.TrustedProxies)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", s.handleHTTP)
@@ -372,15 +374,22 @@ func (s *L7Server) Shutdown(ctx context.Context) error {
 	return s.httpServer.Shutdown(ctx)
 }
 
-// bufferedRecorder intercepts headers and body in memory before committing to w.
+const (
+	maxRetryBodyBuffer    = 10 * 1024 * 1024 // 10 MB limit for buffering request body for retries
+	maxResponseBufferSize = 10 * 1024 * 1024 // 10 MB limit for buffering backend response
+)
+
+// bufferedRecorder intercepts headers and body in memory before committing to w, with streaming fallback for large payloads.
 type bufferedRecorder struct {
-	header http.Header
-	code   int
-	body   bytes.Buffer
+	header   http.Header
+	code     int
+	body     bytes.Buffer
+	overflow bool
+	target   http.ResponseWriter
 }
 
-func newBufferedRecorder() *bufferedRecorder {
-	return &bufferedRecorder{header: make(http.Header)}
+func newBufferedRecorder(target http.ResponseWriter) *bufferedRecorder {
+	return &bufferedRecorder{header: make(http.Header), target: target}
 }
 
 func (b *bufferedRecorder) Header() http.Header {
@@ -395,10 +404,30 @@ func (b *bufferedRecorder) Write(p []byte) (int, error) {
 	if b.code == 0 {
 		b.code = http.StatusOK
 	}
+	// If response exceeds 10MB, stream directly to target ResponseWriter to prevent RAM exhaustion (OOM DoS)
+	if !b.overflow && b.body.Len()+len(p) > maxResponseBufferSize && b.target != nil {
+		b.overflow = true
+		for k, vv := range b.header {
+			for _, v := range vv {
+				b.target.Header().Add(k, v)
+			}
+		}
+		b.target.WriteHeader(b.code)
+		_, _ = b.target.Write(b.body.Bytes())
+		b.body.Reset()
+	}
+
+	if b.overflow && b.target != nil {
+		return b.target.Write(p)
+	}
 	return b.body.Write(p)
 }
 
 func (b *bufferedRecorder) FlushTo(w http.ResponseWriter) {
+	if b.overflow {
+		// Already streamed directly to client
+		return
+	}
 	for k, vv := range b.header {
 		for _, v := range vv {
 			w.Header().Add(k, v)
@@ -414,7 +443,7 @@ func (b *bufferedRecorder) FlushTo(w http.ResponseWriter) {
 
 func (s *L7Server) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
-	clientIP := getClientIP(r)
+	clientIP := s.getClientIP(r)
 	country := "US"
 	if s.analytics != nil {
 		country = s.analytics.ResolveCountry(clientIP)
@@ -579,13 +608,27 @@ func (s *L7Server) handleHTTP(w http.ResponseWriter, r *http.Request) {
 		maxAttempts = 1 + retryPol.MaxRetries()
 	}
 
-	// Buffer request body in memory so subsequent retry attempts don't send an exhausted empty body (EOF)
+	// Buffer request body in memory so subsequent retry attempts don't send an exhausted empty body (EOF).
+	// Strictly limit to maxRetryBodyBuffer (10 MB) to protect against memory exhaustion DoS.
 	var bodyBytes []byte
 	if maxAttempts > 1 && r.Body != nil && (r.Method == http.MethodPut || r.Method == http.MethodDelete || r.Method == http.MethodPost || r.Method == http.MethodPatch) {
-		bodyBytes, _ = io.ReadAll(r.Body)
-		r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
-		r.GetBody = func() (io.ReadCloser, error) {
-			return io.NopCloser(bytes.NewReader(bodyBytes)), nil
+		if r.ContentLength <= maxRetryBodyBuffer {
+			lr := io.LimitReader(r.Body, maxRetryBodyBuffer+1)
+			b, err := io.ReadAll(lr)
+			if err == nil && int64(len(b)) <= maxRetryBodyBuffer {
+				bodyBytes = b
+				r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+				r.GetBody = func() (io.ReadCloser, error) {
+					return io.NopCloser(bytes.NewReader(bodyBytes)), nil
+				}
+			} else {
+				// Body exceeds 10MB limit: stream directly without buffering in RAM for retries
+				r.Body = io.NopCloser(io.MultiReader(bytes.NewReader(b), r.Body))
+				maxAttempts = 1
+			}
+		} else {
+			// Explicit Content-Length > 10MB: do not buffer for retries
+			maxAttempts = 1
 		}
 	}
 
@@ -646,8 +689,8 @@ func (s *L7Server) handleHTTP(w http.ResponseWriter, r *http.Request) {
 			s.metrics.IncHTTPActiveConn(backendHost)
 		}
 
-		// Buffer backend response so retry can occur if 5xx occurs
-		bufRec := newBufferedRecorder()
+		// Buffer backend response so retry can occur if 5xx occurs (with streaming fallback for responses > 10MB)
+		bufRec := newBufferedRecorder(w)
 
 		if backend.ReverseProxy != nil {
 			backend.ReverseProxy.ServeHTTP(bufRec, r)
@@ -687,8 +730,8 @@ func (s *L7Server) handleHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		// Check retryability
-		if retryPol != nil && retryPol.IsRetryable(r, code, nil) && attempt < maxAttempts-1 {
+		// Check retryability (cannot retry if response was already streamed to client due to large payload overflow)
+		if !bufRec.overflow && retryPol != nil && retryPol.IsRetryable(r, code, nil) && attempt < maxAttempts-1 {
 			time.Sleep(retryPol.BackoffDuration(attempt))
 			continue
 		}
@@ -705,8 +748,8 @@ func (s *L7Server) handleHTTP(w http.ResponseWriter, r *http.Request) {
 			code = http.StatusOK
 		}
 
-		// Store in Edge Cache if eligible
-		if cacheEngine != nil && code == http.StatusOK {
+		// Store in Edge Cache if eligible (and not an oversized streaming response)
+		if cacheEngine != nil && code == http.StatusOK && !lastRecorder.overflow {
 			cacheEngine.Put(r, code, lastRecorder.header, lastRecorder.body.Bytes())
 		}
 
@@ -796,20 +839,77 @@ func setProxyHeaders(req *http.Request, clientIP string) {
 	}
 }
 
-// getClientIP extracts IP from X-Forwarded-For, X-Real-IP, or RemoteAddr.
-func getClientIP(r *http.Request) string {
+func (s *L7Server) compileTrustedProxies(proxies []string) {
+	s.trustedProxies = nil
+	for _, raw := range proxies {
+		raw = strings.TrimSpace(raw)
+		if raw == "" {
+			continue
+		}
+		if !strings.Contains(raw, "/") {
+			if ip := net.ParseIP(raw); ip != nil {
+				if ip.To4() != nil {
+					raw += "/32"
+				} else {
+					raw += "/128"
+				}
+			}
+		}
+		_, ipNet, err := net.ParseCIDR(raw)
+		if err == nil {
+			s.trustedProxies = append(s.trustedProxies, ipNet)
+		}
+	}
+}
+
+func (s *L7Server) isTrustedProxy(ip net.IP) bool {
+	for _, cidr := range s.trustedProxies {
+		if cidr.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+// getClientIP extracts real client IP. Only reads X-Forwarded-For if request comes from a trusted proxy.
+// When trusted, it parses XFF right-to-left to find the first untrusted client IP.
+func (s *L7Server) getClientIP(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	peerIP := net.ParseIP(host)
+	if peerIP == nil {
+		return "127.0.0.1"
+	}
+
+	// If direct peer is NOT in trusted_proxies list, ignore XFF and X-Real-IP completely!
+	if len(s.trustedProxies) == 0 || !s.isTrustedProxy(peerIP) {
+		return peerIP.String()
+	}
+
+	// Trusted proxy: parse X-Forwarded-For from right to left
 	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
 		parts := strings.Split(xff, ",")
-		return strings.TrimSpace(parts[0])
+		for i := len(parts) - 1; i >= 0; i-- {
+			ipStr := strings.TrimSpace(parts[i])
+			parsed := net.ParseIP(ipStr)
+			if parsed == nil {
+				continue
+			}
+			if !s.isTrustedProxy(parsed) {
+				return parsed.String()
+			}
+		}
 	}
+
 	if xrip := r.Header.Get("X-Real-IP"); xrip != "" {
-		return strings.TrimSpace(xrip)
+		if parsed := net.ParseIP(strings.TrimSpace(xrip)); parsed != nil {
+			return parsed.String()
+		}
 	}
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err == nil {
-		return host
-	}
-	return r.RemoteAddr
+
+	return peerIP.String()
 }
 
 // Helper to convert string address to URL

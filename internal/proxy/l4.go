@@ -35,7 +35,28 @@ type L4Server struct {
 	bufferPool  *BufferPool
 	listener    net.Listener
 	closed      atomic.Bool
+	activeConns int64
 	wg          sync.WaitGroup
+}
+
+// deadlineConn wraps a net.Conn with automatic sliding idle deadlines on Read and Write.
+type deadlineConn struct {
+	net.Conn
+	timeout time.Duration
+}
+
+func (c *deadlineConn) Read(b []byte) (n int, err error) {
+	if c.timeout > 0 {
+		_ = c.Conn.SetReadDeadline(time.Now().Add(c.timeout))
+	}
+	return c.Conn.Read(b)
+}
+
+func (c *deadlineConn) Write(b []byte) (n int, err error) {
+	if c.timeout > 0 {
+		_ = c.Conn.SetWriteDeadline(time.Now().Add(c.timeout))
+	}
+	return c.Conn.Write(b)
 }
 
 // NewL4Server creates and initializes an L4 TCP load balancer.
@@ -77,9 +98,20 @@ func (s *L4Server) Start() error {
 			continue
 		}
 
+		// Enforce maximum concurrent active connection limit (prevent socket exhaustion)
+		if atomic.LoadInt64(&s.activeConns) >= 10000 {
+			log.Printf("[L4] Maximum connection limit reached (10000), dropping %s", clientConn.RemoteAddr())
+			_ = clientConn.Close()
+			continue
+		}
+		atomic.AddInt64(&s.activeConns, 1)
+
 		s.wg.Add(1)
 		go func(c net.Conn) {
-			defer s.wg.Done()
+			defer func() {
+				atomic.AddInt64(&s.activeConns, -1)
+				s.wg.Done()
+			}()
 			s.handleTCPConn(c)
 		}(clientConn)
 	}
@@ -210,7 +242,14 @@ func (s *L4Server) handleTCPConn(clientConn net.Conn) {
 	}
 	defer backendConn.Close()
 
-	// 4. Bi-directional zero-allocation streaming
+	// 4. Bi-directional streaming with idle deadlines on both sockets
+	idleTimeout := s.timeouts.IdleTimeout
+	if idleTimeout <= 0 {
+		idleTimeout = 60 * time.Second
+	}
+	dClient := &deadlineConn{Conn: clientConn, timeout: idleTimeout}
+	dBackend := &deadlineConn{Conn: backendConn, timeout: idleTimeout}
+
 	var pipeWg sync.WaitGroup
 	pipeWg.Add(2)
 
@@ -220,7 +259,7 @@ func (s *L4Server) handleTCPConn(clientConn net.Conn) {
 		buf := s.bufferPool.Get()
 		defer s.bufferPool.Put(buf)
 
-		n, _ := io.CopyBuffer(backendConn, clientConn, *buf)
+		n, _ := io.CopyBuffer(dBackend, dClient, *buf)
 		if s.metrics != nil {
 			s.metrics.RecordTCPBytes(backendAddr, "inbound", n)
 		}
@@ -235,7 +274,7 @@ func (s *L4Server) handleTCPConn(clientConn net.Conn) {
 		buf := s.bufferPool.Get()
 		defer s.bufferPool.Put(buf)
 
-		n, _ := io.CopyBuffer(clientConn, backendConn, *buf)
+		n, _ := io.CopyBuffer(dClient, dBackend, *buf)
 		if s.metrics != nil {
 			s.metrics.RecordTCPBytes(backendAddr, "outbound", n)
 		}

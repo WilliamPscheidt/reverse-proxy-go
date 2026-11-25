@@ -26,8 +26,12 @@ type Config struct {
 
 // AdminConfig holds web administration dashboard settings.
 type AdminConfig struct {
-	Enabled bool   `yaml:"enabled"`
-	Listen  string `yaml:"listen"` // e.g., ":8090"
+	Enabled     bool   `yaml:"enabled"`
+	Listen      string `yaml:"listen"` // e.g., ":8090"
+	AuthEnabled bool   `yaml:"auth_enabled"`
+	Username    string `yaml:"username"`
+	Password    string `yaml:"password"`
+	APIKey      string `yaml:"api_key"`
 }
 
 // BackendConfig holds backend target configuration.
@@ -44,6 +48,7 @@ type L7Config struct {
 	Algorithm      string          `yaml:"algorithm"` // "round_robin", "least_conn", "ip_hash"
 	Backends       []BackendConfig `yaml:"backends"`
 	CanaryBackends []BackendConfig `yaml:"canary_backends"`
+	TrustedProxies []string        `yaml:"trusted_proxies"` // CIDRs or IPs allowed to set X-Forwarded-For
 }
 
 // L4Config holds TCP load balancer settings.
@@ -159,13 +164,18 @@ func DefaultConfig() *Config {
 	return &Config{
 		Mode: "both",
 		Admin: AdminConfig{
-			Enabled: true,
-			Listen:  ":8090",
+			Enabled:     true,
+			Listen:      ":8090",
+			AuthEnabled: false,
+			Username:    "admin",
+			Password:    "",
+			APIKey:      "",
 		},
 		L7: L7Config{
-			Enabled:   true,
-			Listen:    ":8080",
-			Algorithm: "round_robin",
+			Enabled:        true,
+			Listen:         ":8080",
+			Algorithm:      "round_robin",
+			TrustedProxies: []string{},
 			Backends: []BackendConfig{
 				{URL: "http://127.0.0.1:8081", Weight: 1},
 				{URL: "http://127.0.0.1:8082", Weight: 1},

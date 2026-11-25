@@ -233,6 +233,19 @@ func (r *Router) SetCanaryWeight(id string, weight int) bool {
 	return false
 }
 
+// matchPathPrefix checks if reqPath matches route prefix, respecting segment boundaries.
+// e.g. /teste matches /teste and /teste/foo, but NOT /testeXYZ.
+func matchPathPrefix(reqPath, prefix string) bool {
+	if prefix == "" || prefix == "/" {
+		return true
+	}
+	cleanPrefix := strings.TrimSuffix(prefix, "/")
+	if reqPath == cleanPrefix {
+		return true
+	}
+	return strings.HasPrefix(reqPath, cleanPrefix+"/")
+}
+
 // Match inspects the request and selects the appropriate route and backend pool.
 // Returns the matched Route, selected BackendPool, whether canary was chosen, and whether a custom route matched.
 func (r *Router) Match(req *http.Request) (route *Route, pool any, isCanary bool, matched bool) {
@@ -251,8 +264,8 @@ func (r *Router) Match(req *http.Request) (route *Route, pool any, isCanary bool
 			continue
 		}
 
-		// 2. Path prefix match
-		if !strings.HasPrefix(path, rt.Config.PathPrefix) {
+		// 2. Path prefix match (ensuring path boundary: /teste matches /teste or /teste/..., but NOT /testeXYZ)
+		if !matchPathPrefix(path, rt.Config.PathPrefix) {
 			continue
 		}
 

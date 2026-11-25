@@ -141,3 +141,60 @@ func TestCache_StripSensitiveHeaders(t *testing.T) {
 		t.Fatal("Expected Content-Type to be preserved")
 	}
 }
+
+func TestCache_CookieUserIsolation(t *testing.T) {
+	c := NewCache(DefaultCacheConfig(), nil)
+
+	// User request with Cookie
+	req, _ := http.NewRequest("GET", "http://example.com/dashboard", nil)
+	req.Header.Set("Cookie", "session=alice_secret")
+
+	// Backend returns 200 OK without Cache-Control: public
+	headers := http.Header{"Content-Type": []string{"text/html"}}
+	c.Put(req, http.StatusOK, headers, []byte("<h1>Alice Dashboard</h1>"))
+
+	// Must NOT be cached
+	_, hit := c.Get(req)
+	if hit {
+		t.Fatal("Security violation: authenticated request with Cookie was cached!")
+	}
+}
+
+func TestCache_LRUEviction(t *testing.T) {
+	cfg := CacheConfig{
+		Enabled:    true,
+		DefaultTTL: time.Hour,
+		MaxEntries: 2,
+	}
+	c := NewCache(cfg, nil)
+
+	r1, _ := http.NewRequest("GET", "http://example.com/1", nil)
+	r2, _ := http.NewRequest("GET", "http://example.com/2", nil)
+	r3, _ := http.NewRequest("GET", "http://example.com/3", nil)
+
+	c.Put(r1, http.StatusOK, http.Header{}, []byte("1"))
+	time.Sleep(5 * time.Millisecond)
+	c.Put(r2, http.StatusOK, http.Header{}, []byte("2"))
+	time.Sleep(5 * time.Millisecond)
+
+	// Touch r1 so r2 becomes least recently accessed
+	_, _ = c.Get(r1)
+	time.Sleep(5 * time.Millisecond)
+
+	// Insert r3: should evict r2
+	c.Put(r3, http.StatusOK, http.Header{}, []byte("3"))
+
+	_, hit1 := c.Get(r1)
+	_, hit2 := c.Get(r2)
+	_, hit3 := c.Get(r3)
+
+	if !hit1 {
+		t.Fatal("Expected r1 to remain in cache")
+	}
+	if hit2 {
+		t.Fatal("Expected r2 to be evicted via LRU")
+	}
+	if !hit3 {
+		t.Fatal("Expected r3 to be in cache")
+	}
+}

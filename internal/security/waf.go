@@ -75,22 +75,35 @@ func NewWAF(cfg WAFConfig) *WAF {
 		ruleBlocked: make(map[string]uint64),
 	}
 
-	// SQL Injection patterns
+	// SQL Injection patterns (designed to minimize false positives on normal text, JSON, passwords)
 	w.sqliRegexes = []*regexp.Regexp{
-		regexp.MustCompile(`(?i)(\b(UNION\s+(ALL\s+)?SELECT|SELECT\s+.*\s+FROM|INSERT\s+INTO|DELETE\s+FROM|DROP\s+(TABLE|DATABASE)|ALTER\s+TABLE)\b)`),
-		regexp.MustCompile(`(?i)((\bOR\b|\bAND\b)\s+(['"]?\d+['"]?\s*=\s*['"]?\d+|['"]?[a-z]+['"]?\s*=\s*['"]?[a-z]+))`),
-		regexp.MustCompile(`(?i)(--|#|/\*|\*/|;\s*WAITFOR\s+DELAY|;\s*BENCHMARK\()`),
+		// 1. Classical keywords and statements
+		regexp.MustCompile(`(?i)\b(UNION\s+(ALL\s+)?SELECT|INSERT\s+INTO\s+[\w.]+|DELETE\s+FROM\s+[\w.]+|DROP\s+(TABLE|DATABASE|VIEW)|ALTER\s+TABLE)\b`),
+		// 2. Select subqueries and queries against sensitive databases/tables
+		regexp.MustCompile(`(?i)(\(\s*SELECT\b[\s\S]*?\bFROM\b|'\s*;\s*SELECT\b|\bSELECT\b[\s\S]+?\bFROM\s+(users|accounts|passwords|members|admin|information_schema|sys|pg_|mysql)\b)`),
+		// 3. String concatenation and tautologies: '||'1'='1, ' OR true, ' OR 1=1
+		regexp.MustCompile(`(?i)('\s*\|\|\s*'|'\s*OR\s+(true|false)\b|'\s*AND\s+(true|false)\b)`),
+		regexp.MustCompile(`(?i)(['"]\s*(OR|AND)\s+['"]?\d+['"]?\s*=\s*['"]?\d+|['"]\s*(OR|AND)\s+['"][^'"]*['"]\s*=\s*['"][^'"]*['"])`),
+		regexp.MustCompile(`(?i)\b(OR|AND)\s+\d+\s*[><=]\s*\d+\b`),
+		// 4. Time-based blind SQLi functions
+		regexp.MustCompile(`(?i)\b(AND|OR)?\s*(SLEEP|BENCHMARK|PG_SLEEP|WAITFOR\s+DELAY)\s*\(\d+\)`),
+		// 5. Injected comments (must follow quotes, SQL keywords or semicolons)
+		regexp.MustCompile(`(?i)('|\bOR\b|\bAND\b|\bSELECT\b|;)\s*(--|#|/\*)`),
 	}
 
 	// Cross-Site Scripting (XSS) patterns
 	w.xssRegexes = []*regexp.Regexp{
-		regexp.MustCompile(`(?i)(<script[\s>]|javascript:|onerror\s*=|onload\s*=|onclick\s*=|onmouseover\s*=|alert\(|<iframe[\s>]|<svg[\s>])`),
-		regexp.MustCompile(`(?i)(<[^>]+(on\w+|src=javascript:)[^>]*>)`),
+		regexp.MustCompile(`(?i)(<script[\s>]|javascript:|alert\(|confirm\(|prompt\(|<iframe[\s>]|<svg[\s>])`),
+		// Matches HTML tags with event handlers (e.g. <img onerror=...>, <details ontoggle=...) even without trailing '>'
+		regexp.MustCompile(`(?i)<[a-z0-9_-]+[^>]*?\b(on\w+\s*=|src\s*=\s*['"]?javascript:)`),
 	}
 
 	// Path Traversal / LFI patterns
 	w.pathRegexes = []*regexp.Regexp{
-		regexp.MustCompile(`(?i)(\.\./|\.\.\\|/etc/passwd|/windows/system32|boot\.ini|win\.ini)`),
+		// Standard traversal: ../, ..\, and Tomcat traversal ..;/
+		regexp.MustCompile(`(?i)(\.\.[/\\]|\.\.;[/\\])`),
+		// Common sensitive system files and directories
+		regexp.MustCompile(`(?i)(/etc/(passwd|shadow|group|issue|hosts)|/proc/(self|\d+)/|/windows/system32|boot\.ini|win\.ini)`),
 	}
 
 	// Bad Bots, Scanners & Exploiters
@@ -121,6 +134,8 @@ func (w *WAF) compileCIDRs(cidrs []string) {
 func (w *WAF) Inspect(r *http.Request, clientIP string, country string) (blocked bool, rule string, reason string) {
 	w.mu.RLock()
 	cfg := w.config
+	blockedCIDRs := make([]*net.IPNet, len(w.blockedCIDRs))
+	copy(blockedCIDRs, w.blockedCIDRs)
 	w.mu.RUnlock()
 
 	if !cfg.Enabled {
@@ -128,10 +143,10 @@ func (w *WAF) Inspect(r *http.Request, clientIP string, country string) (blocked
 	}
 
 	// 1. CIDR Subnet Block
-	if len(w.blockedCIDRs) > 0 {
+	if len(blockedCIDRs) > 0 {
 		parsedIP := net.ParseIP(SanitizeIP(clientIP))
 		if parsedIP != nil {
-			for _, cidr := range w.blockedCIDRs {
+			for _, cidr := range blockedCIDRs {
 				if cidr.Contains(parsedIP) {
 					w.recordBlock(RuleCIDRBlock)
 					return true, RuleCIDRBlock, fmt.Sprintf("IP %s pertence à sub-rede bloqueada %s", clientIP, cidr.String())
@@ -179,32 +194,44 @@ func (w *WAF) Inspect(r *http.Request, clientIP string, country string) (blocked
 		}
 	}
 
-	// Collect string payloads to inspect (URI, query params, path)
+	// Collect string payloads to inspect (URI, query params, path, headers, body)
+	// Apply recursive URL decoding (up to 3 levels) to defeat nested obfuscation (%252e%252e%252f -> ../)
+	var testStrings []string
+	addWithDecodings := func(raw string) {
+		if raw == "" {
+			return
+		}
+		testStrings = append(testStrings, raw)
+		curr := raw
+		for i := 0; i < 3; i++ {
+			dec, err := url.QueryUnescape(curr)
+			if err != nil || dec == curr {
+				break
+			}
+			testStrings = append(testStrings, dec)
+			curr = dec
+		}
+	}
+
 	rawURI := r.URL.RequestURI()
-	unescapedURI, err := url.QueryUnescape(rawURI)
-	if err != nil {
-		unescapedURI = rawURI
+	addWithDecodings(rawURI)
+	addWithDecodings(r.URL.Path)
+	addWithDecodings(r.URL.RawQuery)
+
+	// Inspect HTTP Headers (Cookie, Referer, Origin, User-Agent, etc.)
+	for _, h := range []string{"Cookie", "Referer", "Origin", "User-Agent"} {
+		if val := r.Header.Get(h); val != "" {
+			addWithDecodings(val)
+		}
 	}
 
-	testStrings := []string{
-		rawURI,
-		unescapedURI,
-		r.URL.Path,
-		r.URL.RawQuery,
-	}
-
-	// 4. Request Body Inspection (POST / PUT / PATCH / DELETE payloads)
-	if r.Body != nil && (r.Method == http.MethodPost || r.Method == http.MethodPut || r.Method == http.MethodPatch || r.Method == http.MethodDelete) {
-		bodySample, err := io.ReadAll(io.LimitReader(r.Body, 128*1024))
+	// 4. Request Body Inspection (Inspect all methods with a body, up to 512KB)
+	if r.Body != nil {
+		bodySample, err := io.ReadAll(io.LimitReader(r.Body, 512*1024))
 		if err == nil && len(bodySample) > 0 {
 			// Reconstitute original body: the buffered sample + the remainder of r.Body
 			r.Body = io.NopCloser(io.MultiReader(bytes.NewReader(bodySample), r.Body))
-
-			sampleStr := string(bodySample)
-			testStrings = append(testStrings, sampleStr)
-			if unescaped, err := url.QueryUnescape(sampleStr); err == nil && unescaped != sampleStr {
-				testStrings = append(testStrings, unescaped)
-			}
+			addWithDecodings(string(bodySample))
 		}
 	}
 
